@@ -77,8 +77,6 @@ Tested against volumes created by:
 
 - [pfs3aio](https://github.com/tonioni/pfs3aio) — original AmigaOS driver
 - [Coffin OS](https://www.apollo-accelerators.com/wiki/doku.php/start) R65 — 32GB multi-partition RDB images
-- [amitools](https://github.com/cnvogelg/amitools) — Python Amiga tools
-
 Supports MODE_SUPERINDEX, MODE_SUPERDELDIR, MODE_DELDIR, and MODE_LARGEFILE.
 
 ## License

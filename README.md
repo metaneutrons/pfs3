@@ -23,21 +23,52 @@ A pure Rust implementation of the [Professional File System III (PFS3)](https://
 
 ## Installation
 
-```bash
-# Build everything
-cargo build --release
+This project provides two packages:
 
-# Install CLI tools
+- **`pfs3`** — CLI tools (no dependencies, static binary)
+- **`pfs3-fuse`** — FUSE driver (requires libfuse3 on Linux or macFUSE/FUSE-T on macOS)
+
+### Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/metaneutrons/pfs3/releases). Available for Linux (x86_64, aarch64) and macOS (Intel, Apple Silicon).
+
+### Homebrew (macOS)
+
+```bash
+brew tap metaneutrons/tap
+brew install pfs3
+```
+
+### Arch Linux (AUR)
+
+```bash
+# CLI tools
+yay -S pfs3
+
+# FUSE driver
+yay -S pfs3-fuse
+```
+
+### Debian / Ubuntu
+
+Download `.deb` packages from [GitHub Releases](https://github.com/metaneutrons/pfs3/releases):
+
+```bash
+sudo dpkg -i pfs3_*.deb
+sudo dpkg -i pfs3-fuse_*.deb    # optional, pulls in libfuse3
+```
+
+### From source
+
+```bash
+# CLI tools only
 cargo install --path .
 
-# Install FUSE driver (requires macFUSE or Linux FUSE)
+# FUSE driver (requires libfuse3-dev on Linux or macFUSE on macOS)
 cargo install --path crates/pfs3-fuse
 ```
 
-### Requirements
-
-- Rust 1.85+ (edition 2024)
-- For FUSE mounting: [macFUSE](https://osxfuse.github.io/) on macOS or `libfuse-dev` on Linux
+Requires Rust 1.85+ (edition 2024).
 
 ## CLI Usage
 
@@ -156,7 +187,7 @@ mv /tmp/pfs3/old.txt /tmp/pfs3/new.txt
 rm /tmp/pfs3/unwanted.txt
 ```
 
-> ⚠️ Read-write mode does not implement atomic updates. Use only on copies of disk images, never on originals.
+> ⚠️ Read-write mode is experimental. PFS3 does not support journaling or atomic updates — this is a limitation of the on-disk format, same as the original AmigaOS driver. Use only on copies of disk images, never on originals.
 
 ### RDB disk images
 
@@ -256,14 +287,12 @@ Tested against:
 
 - Volumes created by the original [pfs3aio](https://github.com/tonioni/pfs3aio) driver
 - [Coffin OS](https://www.apollo-accelerators.com/wiki/doku.php/start) R65 32GB disk images (multi-partition RDB, SUPERINDEX, deldir)
-- [amitools](https://github.com/cnvogelg/amitools) generated images
 - Volumes with MODE_SUPERINDEX, MODE_SUPERDELDIR, MODE_DELDIR, MODE_LARGEFILE
 
 ## References
 
 - [pfs3aio](https://github.com/tonioni/pfs3aio) — Original PFS3 AmigaOS driver source by Michiel Pelt
 - [AmiFUSE](https://github.com/reinauer/AmiFUSE) — FUSE driver using m68k emulation of real Amiga FS handlers
-- [amitools](https://github.com/cnvogelg/amitools) — Python Amiga tools including PFS3 read/write support
 
 ## License
 
