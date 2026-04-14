@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/metaneutrons/pfs3/compare/v0.1.0...v0.1.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* **ci:** match release workflow tag pattern to release-please (v* not pfs3-v*) ([29f29bc](https://github.com/metaneutrons/pfs3/commit/29f29bc2194bc4df682ad27d852265930ac120c0))
+* **ci:** update AUR deploy action to v4.1.2 (fixes su entrypoint) ([e09adf4](https://github.com/metaneutrons/pfs3/commit/e09adf4f6dcb67c97f4c980320888960a3b8cbbd))
+
 ## 0.1.0 (2026-04-14)
 
 
