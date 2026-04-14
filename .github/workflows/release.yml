@@ -67,10 +67,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
           mkdir -p .cargo
-          cat >> .cargo/config.toml << 'EOF'
-          [target.aarch64-unknown-linux-musl]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
+          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
       - name: Install musl tools (x86_64)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get install -y musl-tools
@@ -115,10 +112,7 @@ jobs:
           if [[ "${{ matrix.target }}" == aarch64* ]]; then
             sudo apt-get install -y gcc-aarch64-linux-gnu
             mkdir -p .cargo
-            cat >> .cargo/config.toml << 'EOF'
-            [target.aarch64-unknown-linux-gnu]
-            linker = "aarch64-linux-gnu-gcc"
-            EOF
+            printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
           fi
       - name: Install macFUSE (macOS)
         if: runner.os == 'macOS'

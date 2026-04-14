@@ -53,7 +53,7 @@ pub fn format_with_size(
     // Determine reserved block size
     let mut resblocksize: u32 = 1024;
     let mut supermode = false;
-    if total_blocks > MAXSMALLDISK as u64 {
+    if total_blocks > MAXSMALLDISK {
         supermode = true;
         let max_1k = (MAXBITMAPINDEX as u64 + 1) * 253 * 253 * 32;
         let max_2k = (MAXBITMAPINDEX as u64 + 1) * 509 * 509 * 32;
@@ -79,7 +79,7 @@ pub fn format_with_size(
         resbm_1k += 1;
         i += 256;
     }
-    let resbm_resblocks = (1024 * resbm_1k + resblocksize - 1) / resblocksize;
+    let resbm_resblocks = (1024 * resbm_1k).div_ceil(resblocksize);
     let rblkcluster = rescluster * resbm_resblocks;
 
     let firstreserved: u32 = 2;
@@ -114,8 +114,8 @@ pub fn format_with_size(
     // Data blocks
     let data_blocks = total_blocks as u32 - (lastreserved - firstreserved + 1) - firstreserved;
     let bits_per_bmb = index_per_block * 32;
-    let no_bmb = (data_blocks + bits_per_bmb - 1) / bits_per_bmb;
-    let no_bmi = (no_bmb + index_per_block - 1) / index_per_block;
+    let no_bmb = data_blocks.div_ceil(bits_per_bmb);
+    let no_bmi = no_bmb.div_ceil(index_per_block);
 
     // 1. Boot block
     let mut boot = vec![0u8; bs];
@@ -289,7 +289,7 @@ pub fn format_with_size(
 
     Ok(FormatResult {
         volume_name: opts.volume_name.clone(),
-        total_blocks: total_blocks as u64,
+        total_blocks,
         data_blocks: data_blocks as u64,
         blocks_free: data_blocks as u64,
         num_reserved: numreserved,

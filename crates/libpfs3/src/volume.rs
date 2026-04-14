@@ -172,7 +172,7 @@ impl Volume {
 
     /// Block size in bytes.
     pub fn block_size(&self) -> u32 {
-        self.dev.block_size() as u32
+        self.dev.block_size()
     }
 
     /// Maximum filename length (32 or 107 with long filenames).
@@ -389,10 +389,10 @@ impl Volume {
             }
             for i in 0..entries_per_block {
                 let off = DELDIR_HEADER_SIZE + i * DELDIR_ENTRY_SIZE;
-                if off + DELDIR_ENTRY_SIZE <= data.len() {
-                    if let Some(entry) = DelDirEntry::parse(&data[off..off + DELDIR_ENTRY_SIZE]) {
-                        result.push(entry);
-                    }
+                if off + DELDIR_ENTRY_SIZE <= data.len()
+                    && let Some(entry) = DelDirEntry::parse(&data[off..off + DELDIR_ENTRY_SIZE])
+                {
+                    result.push(entry);
                 }
             }
         }

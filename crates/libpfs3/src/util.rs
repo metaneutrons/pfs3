@@ -156,12 +156,7 @@ pub fn latin1_to_string(data: &[u8]) -> String {
 
 /// Case-insensitive comparison for Amiga filenames (Latin-1).
 pub fn name_eq_ci(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.chars()
-        .zip(b.chars())
-        .all(|(ca, cb)| ca.to_ascii_lowercase() == cb.to_ascii_lowercase())
+    a.eq_ignore_ascii_case(b)
 }
 
 /// Return the current time as an Amiga datestamp (days, minutes, ticks).

@@ -239,10 +239,7 @@ fn main() -> Result<()> {
             if parts.is_empty() {
                 println!("No PFS3 partitions found.");
             } else {
-                println!(
-                    "{:<6} {:<12} {:<12} {}",
-                    "Index", "Name", "Offset", "Blocks"
-                );
+                println!("{:<6} {:<12} {:<12} Blocks", "Index", "Name", "Offset");
                 for (i, p) in parts.iter().enumerate() {
                     println!("{:<6} {:<12} {:<12} {}", i, p.name, p.offset, p.blocks);
                 }
@@ -259,7 +256,7 @@ fn main() -> Result<()> {
             if entries.is_empty() {
                 println!("Deldir is empty (or not enabled).");
             } else {
-                println!("{:<4} {:<16} {:>10} {}", "Idx", "Filename", "Size", "Date");
+                println!("{:<4} {:<16} {:>10} Date", "Idx", "Filename", "Size");
                 println!("{}", "-".repeat(50));
                 for (i, e) in entries.iter().enumerate() {
                     let date = libpfs3::util::amiga_date_string(

@@ -110,7 +110,7 @@ impl Writer {
         data: &[u8],
     ) -> Result<()> {
         let bs = self.vol.block_size() as usize;
-        let num_blocks = ((data.len() + bs - 1) / bs).max(1);
+        let num_blocks = data.len().div_ceil(bs).max(1);
 
         let blocks = self.alloc_data_blocks(num_blocks as u32)?;
         for (i, &blk) in blocks.iter().enumerate() {
@@ -159,7 +159,7 @@ impl Writer {
     ) -> Result<()> {
         let data = target.as_bytes();
         let bs = self.vol.block_size() as usize;
-        let num_blocks = ((data.len() + bs - 1) / bs).max(1);
+        let num_blocks = data.len().div_ceil(bs).max(1);
         let blocks = self.alloc_data_blocks(num_blocks as u32)?;
         for (i, &blk) in blocks.iter().enumerate() {
             let start = i * bs;
@@ -271,8 +271,6 @@ impl Writer {
         self.update_rootblock()
     }
 
-    /// Rename/move an entry from one directory to another.
-
     /// Overwrite an existing file's data in-place, reusing its anode.
     /// The anode number stays stable — safe for FUSE inode caching.
     pub fn overwrite_file_in(
@@ -283,7 +281,7 @@ impl Writer {
         data: &[u8],
     ) -> Result<()> {
         let bs = self.vol.block_size() as usize;
-        let new_blocks_needed = ((data.len() + bs - 1) / bs).max(1) as u32;
+        let new_blocks_needed = data.len().div_ceil(bs).max(1) as u32;
 
         // Get existing chain
         let old_chain =
@@ -563,13 +561,12 @@ impl Writer {
             .clone();
 
         // If destination exists, delete it first
-        if let Ok(dst_entries) = self.vol.list_dir_by_anode(dst_parent) {
-            if dst_entries
+        if let Ok(dst_entries) = self.vol.list_dir_by_anode(dst_parent)
+            && dst_entries
                 .iter()
                 .any(|e| crate::util::name_eq_ci(&e.name, dst_name))
-            {
-                self.delete_in(dst_parent, dst_name)?;
-            }
+        {
+            self.delete_in(dst_parent, dst_name)?;
         }
 
         // Add entry in new location with new name
@@ -701,7 +698,7 @@ impl Writer {
         let no_bmb = {
             let bits_per_bmb = self.index_per_block * 32;
             let ds = self.vol.rootblock.disksize;
-            (ds + bits_per_bmb - 1) / bits_per_bmb
+            ds.div_ceil(bits_per_bmb)
         };
         for seq in 0..no_bmb {
             if let Some(blk) = self.get_bitmap_block_nr(seq)? {
@@ -723,6 +720,7 @@ impl Writer {
         let mut allocated = Vec::new();
         for bm_idx in 0..self.data_bm.len() {
             let (_, ref mut longs) = self.data_bm[bm_idx];
+            #[allow(clippy::needless_range_loop)]
             for li in 0..longs.len() {
                 if longs[li] == 0 {
                     continue;
@@ -961,7 +959,7 @@ impl Writer {
                     }
                     pos += data[pos] as usize;
                 }
-                if pos + entry_bytes.len() + 1 <= self.resblocksize as usize {
+                if pos + entry_bytes.len() < self.resblocksize as usize {
                     data[pos..pos + entry_bytes.len()].copy_from_slice(&entry_bytes);
                     if pos + entry_bytes.len() < self.resblocksize as usize {
                         data[pos + entry_bytes.len()] = 0;
