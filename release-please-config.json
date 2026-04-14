@@ -1,0 +1,14 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "component": "pfs3",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        "crates/libpfs3/Cargo.toml",
+        "crates/pfs3-fuse/Cargo.toml"
+      ]
+    }
+  }
+}

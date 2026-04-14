@@ -1,0 +1,18 @@
+[package]
+name = "libpfs3"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0-or-later"
+description = "Pure Rust PFS3 (Amiga) filesystem library — read, write, format, and check"
+readme = "README.md"
+repository = "https://github.com/metaneutrons/pfs3"
+keywords = ["amiga", "pfs3", "filesystem", "retro", "fuse"]
+categories = ["filesystem", "parser-implementations"]
+
+[dependencies]
+byteorder = "1"
+thiserror = "2"
+log = "0.4"
+
+[dev-dependencies]
+sevenz-rust = "0.6"

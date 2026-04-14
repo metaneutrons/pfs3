@@ -1,0 +1,22 @@
+[package]
+name = "pfs3-fuse"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0-or-later"
+description = "FUSE driver for PFS3 (Amiga) disk images"
+
+[dependencies]
+libpfs3 = { path = "../libpfs3" }
+fuser = "0.15"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
+
+[package.metadata.deb]
+section = "utils"
+depends = "libfuse3-3"
+assets = [
+  ["target/release/pfs3-fuse", "usr/bin/", "755"],
+]

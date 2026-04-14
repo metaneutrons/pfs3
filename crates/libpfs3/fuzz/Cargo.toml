@@ -1,0 +1,29 @@
+[package]
+name = "libpfs3-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+libpfs3 = { path = ".." }
+
+[[bin]]
+name = "fuzz_rootblock"
+path = "fuzz_targets/fuzz_rootblock.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_direntry"
+path = "fuzz_targets/fuzz_direntry.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_volume"
+path = "fuzz_targets/fuzz_volume.rs"
+doc = false

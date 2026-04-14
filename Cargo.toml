@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/libpfs3", "crates/pfs3-fuse", "."]
+exclude = ["crates/libpfs3/fuzz"]
+resolver = "3"
+
+[package]
+name = "pfs3"
+version = "0.1.0"
+edition = "2024"
+default-run = "pfs3"
+license = "LGPL-3.0-or-later"
+description = "PFS3 (Professional File System III) tools for Amiga disk images"
+
+[dependencies]
+libpfs3 = { path = "crates/libpfs3" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[package.metadata.deb]
+section = "utils"
+assets = [
+  ["target/release/pfs3", "usr/bin/", "755"],
+  ["README.md", "usr/share/doc/pfs3/", "644"],
+  ["LICENSE", "usr/share/doc/pfs3/", "644"],
+]

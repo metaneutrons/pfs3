@@ -1,0 +1,10 @@
+/target
+
+# Disk images (large binaries)
+*.hdf
+!crates/libpfs3/tests/fixtures/small.hdf
+
+# Fuzz corpus and artifacts (regenerated locally)
+crates/libpfs3/fuzz/target/
+crates/libpfs3/fuzz/corpus/
+crates/libpfs3/fuzz/artifacts/
