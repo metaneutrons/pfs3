@@ -1,5 +1,11 @@
 # pfs3 — Amiga PFS3 Filesystem Tools & FUSE Driver
 
+[![CI](https://github.com/metaneutrons/pfs3/actions/workflows/ci.yml/badge.svg)](https://github.com/metaneutrons/pfs3/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/libpfs3.svg)](https://crates.io/crates/libpfs3)
+[![docs.rs](https://docs.rs/libpfs3/badge.svg)](https://docs.rs/libpfs3)
+[![License: LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+[![AUR](https://img.shields.io/aur/version/pfs3)](https://aur.archlinux.org/packages/pfs3)
+
 A pure Rust implementation of the [Professional File System III (PFS3)](https://aminet.net/package/disk/misc/pfs3aio) for Amiga disk images. Read, write, format, check, and mount PFS3 volumes on modern systems.
 
 ## Features
