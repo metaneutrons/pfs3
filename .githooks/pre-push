@@ -1,0 +1,2 @@
+#!/bin/sh
+cargo test -p libpfs3 --release || { echo "tests failed"; exit 1; }
