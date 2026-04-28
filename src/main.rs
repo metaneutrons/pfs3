@@ -1,7 +1,7 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use libpfs3::volume::Volume;
-use std::path::{Path, PathBuf};
+use anyhow::{Result, bail};
+use clap::{Args, Parser, Subcommand};
+use libpfs3::volume::{Volume, detect_pfs3_partitions};
+use std::path::PathBuf;
 
 mod cmd;
 
@@ -12,230 +12,240 @@ struct Cli {
     command: Commands,
 }
 
+/// Common arguments for selecting a partition within a disk image.
+#[derive(Args, Clone)]
+struct ImageArgs {
+    /// Path to the disk image or device
+    image: PathBuf,
+    /// Byte offset to the partition start
+    #[arg(long, default_value = "0")]
+    offset: u64,
+    /// Partition name or index (e.g. DH0, DH1, 0, 1)
+    #[arg(long, short)]
+    partition: Option<String>,
+}
+
+impl ImageArgs {
+    /// Open a read-only volume, erroring if multiple partitions and none selected.
+    fn open_vol(&self) -> Result<Volume> {
+        self.require_unambiguous()?;
+        Ok(Volume::open_auto(
+            &self.image,
+            self.offset,
+            self.partition.as_deref(),
+            false,
+        )?)
+    }
+
+    /// Error if the image has multiple PFS3 partitions and the user didn't select one.
+    fn require_unambiguous(&self) -> Result<()> {
+        if self.partition.is_some() || self.offset != 0 {
+            return Ok(());
+        }
+        let parts = detect_pfs3_partitions(&self.image)?;
+        if parts.len() > 1 {
+            let names: Vec<_> = parts.iter().map(|p| p.name.as_str()).collect();
+            bail!(
+                "Multiple PFS3 partitions found ({}).\nUse --partition <name> to select one.",
+                names.join(", ")
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Show filesystem information
     Info {
-        image: PathBuf,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        /// Partition name or index (e.g. DH0, DH1, 0, 1)
-        #[arg(long, short)]
-        partition: Option<String>,
+        #[command(flatten)]
+        img: ImageArgs,
     },
     /// List directory contents
     Ls {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Path inside the filesystem
         #[arg(default_value = "/")]
         path: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Extract files from the image
     Extract {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Path inside the filesystem to extract
         #[arg(default_value = "/")]
         path: String,
+        /// Local output directory
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short = 'P')]
-        partition: Option<String>,
     },
     /// Print file contents to stdout
     Cat {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Path to the file inside the filesystem
         path: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Check filesystem consistency
     Check {
-        image: PathBuf,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
+        #[command(flatten)]
+        img: ImageArgs,
         /// Attempt to repair detected issues
         #[arg(long)]
         repair: bool,
     },
     /// Format a partition/image as PFS3
     Mkfs {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Volume name
         #[arg(short, long, default_value = "Untitled")]
         name: String,
+        /// Create a new image with this size (in MB)
         #[arg(long)]
         size_mb: Option<u32>,
-        #[arg(long, default_value = "0")]
-        offset: u64,
     },
     /// Write a local file into the PFS3 image
     Write {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Local source file
         src: PathBuf,
+        /// Destination path inside the filesystem
         dest: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Create a directory inside the PFS3 image
     Mkdir {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Directory path to create
         path: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Remove a file or empty directory
     Rm {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Path to remove inside the filesystem
         path: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Set Amiga protection bits (e.g. "rwed", "+p", "-wd")
     Protect {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Path to the file or directory
         path: String,
         /// Protection spec: "rwed", "+rw", "-ed", "hsparwed"
         bits: String,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
     /// Change volume properties
     Tune {
-        image: PathBuf,
+        #[command(flatten)]
+        img: ImageArgs,
+        /// New volume name
         #[arg(long)]
         name: Option<String>,
-        #[arg(long, default_value = "0")]
-        offset: u64,
     },
     /// List partitions in an RDB disk image
-    Partitions { image: PathBuf },
+    Partitions {
+        /// Path to the disk image
+        image: PathBuf,
+    },
     /// List deleted files in the deldir (trash)
     Deldir {
-        image: PathBuf,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
+        #[command(flatten)]
+        img: ImageArgs,
     },
     /// Undelete a file from the deldir
     Undelete {
-        image: PathBuf,
-        /// Filename (or index from `pfs3 deldir`)
+        #[command(flatten)]
+        img: ImageArgs,
+        /// Filename or index from `pfs3 deldir`
         name: String,
-        /// Destination path inside PFS3 (default: root)
+        /// Destination path inside the filesystem (default: root)
         #[arg(short, long)]
         dest: Option<String>,
-        #[arg(long, default_value = "0")]
-        offset: u64,
-        #[arg(long, short)]
-        partition: Option<String>,
     },
-}
-
-/// Open a volume using --partition or --offset.
-fn open_vol(image: &Path, offset: u64, partition: Option<&str>) -> Result<Volume> {
-    Ok(Volume::open_auto(image, offset, partition, false)?)
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Info {
-            image,
-            offset,
-            partition,
-        } => {
-            let vol = open_vol(&image, offset, partition.as_deref())?;
+        Commands::Info { img } => {
+            if img.partition.is_none() && img.offset == 0 {
+                let parts = detect_pfs3_partitions(&img.image)?;
+                if parts.len() > 1 {
+                    return cmd::info::run_overview(&img.image, &parts);
+                }
+            }
+            let vol = img.open_vol()?;
             cmd::info::run_vol(vol)
         }
-        Commands::Ls {
-            image,
-            path,
-            offset,
-            partition,
-        } => {
-            let mut vol = open_vol(&image, offset, partition.as_deref())?;
+        Commands::Ls { img, path } => {
+            let mut vol = img.open_vol()?;
             cmd::ls::run_vol(&mut vol, &path)
         }
-        Commands::Extract {
-            image,
-            path,
-            output,
-            offset,
-            partition,
-        } => {
-            let mut vol = open_vol(&image, offset, partition.as_deref())?;
+        Commands::Extract { img, path, output } => {
+            let mut vol = img.open_vol()?;
             cmd::extract::run_vol(&mut vol, &path, &output)
         }
-        Commands::Cat {
-            image,
-            path,
-            offset,
-            partition,
-        } => {
-            let mut vol = open_vol(&image, offset, partition.as_deref())?;
+        Commands::Cat { img, path } => {
+            let mut vol = img.open_vol()?;
             cmd::cat::run_vol(&mut vol, &path)
         }
-        Commands::Check {
-            image,
-            offset,
-            partition,
-            repair,
-        } => cmd::check::run(&image, offset, partition.as_deref(), repair),
-        Commands::Mkfs {
-            image,
-            name,
-            size_mb,
-            offset,
-        } => cmd::mkfs::run(&image, &name, size_mb, offset),
-        Commands::Write {
-            image,
-            src,
-            dest,
-            offset,
-            partition,
-        } => cmd::write::run(&image, &src, &dest, offset, partition.as_deref()),
-        Commands::Mkdir {
-            image,
-            path,
-            offset,
-            partition,
-        } => cmd::write::mkdir(&image, &path, offset, partition.as_deref()),
-        Commands::Rm {
-            image,
-            path,
-            offset,
-            partition,
-        } => cmd::write::rm(&image, &path, offset, partition.as_deref()),
-        Commands::Protect {
-            image,
-            path,
-            bits,
-            offset,
-            partition,
-        } => cmd::protect::run(&image, &path, &bits, offset, partition.as_deref()),
-        Commands::Tune {
-            image,
-            name,
-            offset,
-        } => cmd::tune::run(&image, name.as_deref(), offset),
+        Commands::Check { img, repair } => {
+            img.require_unambiguous()?;
+            cmd::check::run(&img.image, img.offset, img.partition.as_deref(), repair)
+        }
+        Commands::Mkfs { img, name, size_mb } => {
+            img.require_unambiguous()?;
+            cmd::mkfs::run(
+                &img.image,
+                &name,
+                size_mb,
+                img.offset,
+                img.partition.as_deref(),
+            )
+        }
+        Commands::Write { img, src, dest } => {
+            img.require_unambiguous()?;
+            cmd::write::run(
+                &img.image,
+                &src,
+                &dest,
+                img.offset,
+                img.partition.as_deref(),
+            )
+        }
+        Commands::Mkdir { img, path } => {
+            img.require_unambiguous()?;
+            cmd::write::mkdir(&img.image, &path, img.offset, img.partition.as_deref())
+        }
+        Commands::Rm { img, path } => {
+            img.require_unambiguous()?;
+            cmd::write::rm(&img.image, &path, img.offset, img.partition.as_deref())
+        }
+        Commands::Protect { img, path, bits } => {
+            img.require_unambiguous()?;
+            cmd::protect::run(
+                &img.image,
+                &path,
+                &bits,
+                img.offset,
+                img.partition.as_deref(),
+            )
+        }
+        Commands::Tune { img, name } => {
+            img.require_unambiguous()?;
+            cmd::tune::run(
+                &img.image,
+                name.as_deref(),
+                img.offset,
+                img.partition.as_deref(),
+            )
+        }
         Commands::Partitions { image } => {
-            let parts = libpfs3::volume::detect_pfs3_partitions(&image)?;
+            let parts = detect_pfs3_partitions(&image)?;
             if parts.is_empty() {
                 println!("No PFS3 partitions found.");
             } else {
@@ -246,12 +256,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Deldir {
-            image,
-            offset,
-            partition,
-        } => {
-            let mut vol = open_vol(&image, offset, partition.as_deref())?;
+        Commands::Deldir { img } => {
+            let mut vol = img.open_vol()?;
             let entries = vol.list_deldir()?;
             if entries.is_empty() {
                 println!("Deldir is empty (or not enabled).");
@@ -270,12 +276,15 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Undelete {
-            image,
-            name,
-            dest,
-            offset,
-            partition,
-        } => cmd::write::undelete(&image, &name, dest.as_deref(), offset, partition.as_deref()),
+        Commands::Undelete { img, name, dest } => {
+            img.require_unambiguous()?;
+            cmd::write::undelete(
+                &img.image,
+                &name,
+                dest.as_deref(),
+                img.offset,
+                img.partition.as_deref(),
+            )
+        }
     }
 }

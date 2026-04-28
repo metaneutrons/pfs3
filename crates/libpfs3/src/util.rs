@@ -163,7 +163,7 @@ pub fn name_eq_ci(a: &str, b: &str) -> bool {
 pub fn current_amiga_datestamp() -> (u16, u16, u16) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
     let amiga_secs = secs.saturating_sub(AMIGA_EPOCH_OFFSET);
     let days = (amiga_secs / 86400) as u16;
