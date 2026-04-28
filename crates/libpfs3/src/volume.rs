@@ -269,7 +269,11 @@ impl Volume {
             .anodes
             .get_chain(anodenr, self.dev.as_ref(), &mut self.cache)?;
         let bs = self.dev.block_size() as u64;
-        let mut data = Vec::with_capacity(size as usize);
+        // Cap allocation to what the anode chain can actually provide,
+        // protecting against corrupt size fields that would cause OOM.
+        let chain_capacity: u64 = chain.iter().map(|a| a.clustersize as u64 * bs).sum();
+        let actual_size = size.min(chain_capacity);
+        let mut data = Vec::with_capacity(actual_size as usize);
         let mut remaining = size;
 
         let mut block_buf = vec![0u8; bs as usize];
