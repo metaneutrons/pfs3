@@ -53,7 +53,7 @@ pub struct Rootblock {
 
 impl Rootblock {
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < 0x60 {
+        if data.len() < RB_OFF_INDEX_UNION {
             return Err(Error::TooShort("rootblock"));
         }
         let mut c = Cursor::new(data);
@@ -70,11 +70,13 @@ impl Rootblock {
         let creation_tick = c.read_u16::<BigEndian>()?;
         let protection = c.read_u16::<BigEndian>()?;
 
-        let namelen = data[0x14] as usize;
+        let namelen = data[RB_OFF_DISKNAME] as usize;
         let namelen = namelen.min(31);
-        let diskname = crate::util::latin1_to_string(&data[0x15..0x15 + namelen]);
+        let diskname = crate::util::latin1_to_string(
+            &data[RB_OFF_DISKNAME + 1..RB_OFF_DISKNAME + 1 + namelen],
+        );
 
-        let mut c = Cursor::new(&data[0x34..]);
+        let mut c = Cursor::new(&data[RB_OFF_LASTRESERVED..]);
         let lastreserved = c.read_u32::<BigEndian>()?;
         let firstreserved = c.read_u32::<BigEndian>()?;
         let reserved_free = c.read_u32::<BigEndian>()?;
@@ -91,7 +93,7 @@ impl Rootblock {
         let mut bitmapindex = Vec::new();
         let mut indexblocks = Vec::new();
 
-        let idx_base = 0x60;
+        let idx_base = RB_OFF_INDEX_UNION;
         if is_large {
             for i in 0..=MAXBITMAPINDEX {
                 let off = idx_base + i * 4;
