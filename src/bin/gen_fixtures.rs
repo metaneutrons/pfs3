@@ -5,13 +5,14 @@
 
 use libpfs3::format::{self, FormatOptions};
 use libpfs3::io::FileBlockDevice;
+use libpfs3::ondisk::put_u32;
 use libpfs3::volume::Volume;
 use libpfs3::writer::Writer;
 use std::path::Path;
 
 fn main() {
     let fixture_dir = Path::new("crates/libpfs3/tests/fixtures");
-    std::fs::create_dir_all(fixture_dir).unwrap();
+    std::fs::create_dir_all(fixture_dir).expect("failed to create fixtures directory");
     generate_small_hdf(&fixture_dir.join("small.hdf"));
     println!("Done.");
 }
@@ -29,79 +30,77 @@ fn generate_small_hdf(path: &Path) {
     let part_start = (2 * heads * secs) as usize * 512;
     let part_blocks = ((cyls - 2) * heads * secs) as u64;
 
-    // Write full image first, then format the partition in-place
-    std::fs::write(path, &data).unwrap();
+    std::fs::write(path, &data).expect("failed to write image");
 
-    let dev = FileBlockDevice::open_rw(path, 512, part_start as u64, part_blocks).unwrap();
+    let dev = FileBlockDevice::open_rw(path, 512, part_start as u64, part_blocks)
+        .expect("failed to open image for formatting");
     let opts = FormatOptions {
         volume_name: "TestVol".into(),
         enable_deldir: false,
     };
-    format::format_with_size(&dev, part_blocks, &opts).unwrap();
+    format::format_with_size(&dev, part_blocks, &opts).expect("format failed");
     drop(dev);
 
-    let dev = FileBlockDevice::open_rw(path, 512, part_start as u64, 0).unwrap();
-    let vol = Volume::from_device(Box::new(dev)).unwrap();
-    let mut w = Writer::open(vol).unwrap();
-    w.write_file("hello.txt", b"Hello from PFS3!\n").unwrap();
+    let dev =
+        FileBlockDevice::open_rw(path, 512, part_start as u64, 0).expect("failed to reopen image");
+    let vol = Volume::from_device(Box::new(dev)).expect("failed to open volume");
+    let mut w = Writer::open(vol).expect("failed to open writer");
+    w.write_file("hello.txt", b"Hello from PFS3!\n")
+        .expect("failed to write hello.txt");
     w.write_file(
         "test.bin",
         &(0..=255u8).cycle().take(1024).collect::<Vec<_>>(),
     )
-    .unwrap();
-    w.create_dir("SubDir").unwrap();
+    .expect("failed to write test.bin");
+    w.create_dir("SubDir").expect("failed to create SubDir");
     w.write_file("SubDir/nested.txt", b"Nested file content.\n")
-        .unwrap();
+        .expect("failed to write nested.txt");
 
     println!("Generated {} ({} bytes)", path.display(), image_size);
 }
 
 fn write_rdb(data: &mut [u8], cyls: u32, heads: u32, secs: u32) {
     let mut rdsk = vec![0u8; 512];
-    put_be(&mut rdsk, 0, u32::from_be_bytes(*b"RDSK"));
-    put_be(&mut rdsk, 4, 64);
-    put_be(&mut rdsk, 0x0C, 7);
-    put_be(&mut rdsk, 0x10, 512);
-    put_be(&mut rdsk, 0x1C, 1);
-    put_be(&mut rdsk, 0x40, cyls);
-    put_be(&mut rdsk, 0x44, secs);
-    put_be(&mut rdsk, 0x48, heads);
+    put_u32(&mut rdsk, 0, u32::from_be_bytes(*b"RDSK"));
+    put_u32(&mut rdsk, 4, 64);
+    put_u32(&mut rdsk, 0x0C, 7);
+    put_u32(&mut rdsk, 0x10, 512);
+    put_u32(&mut rdsk, 0x1C, 1);
+    put_u32(&mut rdsk, 0x40, cyls);
+    put_u32(&mut rdsk, 0x44, secs);
+    put_u32(&mut rdsk, 0x48, heads);
     fix_checksum(&mut rdsk);
     data[..512].copy_from_slice(&rdsk);
 
     let mut part = vec![0u8; 512];
-    put_be(&mut part, 0, u32::from_be_bytes(*b"PART"));
-    put_be(&mut part, 4, 64);
-    put_be(&mut part, 0x0C, 7);
-    put_be(&mut part, 0x10, 0xFFFFFFFF);
+    put_u32(&mut part, 0, u32::from_be_bytes(*b"PART"));
+    put_u32(&mut part, 4, 64);
+    put_u32(&mut part, 0x0C, 7);
+    put_u32(&mut part, 0x10, 0xFFFFFFFF);
     let name = b"DH0";
     part[0x24] = name.len() as u8;
     part[0x25..0x25 + name.len()].copy_from_slice(name);
     let env = 0x80;
-    put_be(&mut part, env, 16);
-    put_be(&mut part, env + 0x04, 128);
-    put_be(&mut part, env + 0x0C, heads);
-    put_be(&mut part, env + 0x10, 1);
-    put_be(&mut part, env + 0x14, secs);
-    put_be(&mut part, env + 0x18, 2);
-    put_be(&mut part, env + 0x24, 2);
-    put_be(&mut part, env + 0x28, cyls - 1);
-    put_be(&mut part, env + 0x30, 1);
-    put_be(&mut part, env + 0x34, 0x7FFFFFFE);
-    put_be(&mut part, env + 0x40, 0x50465303);
+    put_u32(&mut part, env, 16);
+    put_u32(&mut part, env + 0x04, 128);
+    put_u32(&mut part, env + 0x0C, heads);
+    put_u32(&mut part, env + 0x10, 1);
+    put_u32(&mut part, env + 0x14, secs);
+    put_u32(&mut part, env + 0x18, 2);
+    put_u32(&mut part, env + 0x24, 2);
+    put_u32(&mut part, env + 0x28, cyls - 1);
+    put_u32(&mut part, env + 0x30, 1);
+    put_u32(&mut part, env + 0x34, 0x7FFFFFFE);
+    put_u32(&mut part, env + 0x40, 0x50465303);
     fix_checksum(&mut part);
     data[512..1024].copy_from_slice(&part);
 }
 
-fn put_be(buf: &mut [u8], off: usize, val: u32) {
-    buf[off..off + 4].copy_from_slice(&val.to_be_bytes());
-}
-
 fn fix_checksum(block: &mut [u8]) {
-    put_be(block, 8, 0);
+    put_u32(block, 8, 0);
     let mut total: u32 = 0;
     for i in (0..block.len()).step_by(4) {
         total = total.wrapping_add(u32::from_be_bytes(block[i..i + 4].try_into().unwrap()));
     }
-    put_be(block, 8, 0u32.wrapping_sub(total));
+    put_u32(block, 8, 0u32.wrapping_sub(total));
 }
