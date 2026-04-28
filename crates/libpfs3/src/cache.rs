@@ -50,9 +50,10 @@ impl BlockCache {
         self.generation += 1;
         let g = self.generation;
 
-        if let Some(entry) = self.entries.get_mut(&block) {
+        if self.entries.contains_key(&block) {
+            let entry = self.entries.get_mut(&block).unwrap();
             entry.generation = g;
-            return Ok(&self.entries.get(&block).unwrap().data);
+            return Ok(&entry.data);
         }
 
         // Read from disk
@@ -72,13 +73,10 @@ impl BlockCache {
             }
         }
 
-        self.entries.insert(
-            block,
-            CacheEntry {
-                data: buf,
-                generation: g,
-            },
-        );
-        Ok(&self.entries.get(&block).unwrap().data)
+        let entry = self.entries.entry(block).or_insert(CacheEntry {
+            data: buf,
+            generation: g,
+        });
+        Ok(&entry.data)
     }
 }
