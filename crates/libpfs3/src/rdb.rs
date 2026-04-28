@@ -42,8 +42,12 @@ pub fn detect_pfs3_partitions(path: &Path) -> Result<Vec<PartitionInfo>> {
         return Ok(Vec::new()); // not RDB
     }
 
+    // Read rdb_highblock from RDSK header (offset 0x0C)
+    let rdb_highblock = u32::from_be_bytes(buf[0x0C..0x10].try_into().unwrap()) as u64;
+    let scan_limit = rdb_highblock.min(1023) + 1; // cap at 1024 for safety
+
     let mut partitions = Vec::new();
-    for blk in 1..64 {
+    for blk in 1..scan_limit {
         f.seek(SeekFrom::Start(blk * 512))?;
         if f.read(&mut buf)? < 512 {
             break;
