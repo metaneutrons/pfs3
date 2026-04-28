@@ -464,30 +464,52 @@ impl Writer {
                             if fp & 1 != 0 {
                                 fp += 1;
                             }
-                            if fp + 2 <= pos + esize {
+                            let end = pos + esize;
+                            if fp + 2 <= end {
                                 let flags =
                                     u16::from_be_bytes(data[fp..fp + 2].try_into().unwrap());
                                 fp += 2;
-                                if flags & 0x0001 != 0 {
-                                    fp += 4;
-                                }
-                                if flags & 0x0002 != 0 {
-                                    fp += 2;
-                                }
-                                if flags & 0x0004 != 0 {
-                                    fp += 2;
-                                }
-                                if flags & 0x0008 != 0 {
-                                    fp += 4;
-                                }
-                                if flags & 0x0010 != 0 {
-                                    fp += 4;
-                                }
-                                if flags & 0x0020 != 0 {
-                                    fp += 4;
-                                }
-                                if flags & 0x0040 != 0 && fp + 2 <= pos + esize {
-                                    put_u16(&mut data, fp, (new_size >> 32) as u16);
+                                // Skip fields in order; bail via block if truncated
+                                'extra: {
+                                    if flags & 0x0001 != 0 {
+                                        fp += 4;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0002 != 0 {
+                                        fp += 2;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0004 != 0 {
+                                        fp += 2;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0008 != 0 {
+                                        fp += 4;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0010 != 0 {
+                                        fp += 4;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0020 != 0 {
+                                        fp += 4;
+                                        if fp > end {
+                                            break 'extra;
+                                        }
+                                    }
+                                    if flags & 0x0040 != 0 && fp + 2 <= end {
+                                        put_u16(&mut data, fp, (new_size >> 32) as u16);
+                                    }
                                 }
                             }
                         }
