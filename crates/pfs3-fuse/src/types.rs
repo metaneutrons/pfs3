@@ -12,6 +12,9 @@ use libpfs3::writer::Writer;
 
 pub const FUSE_ROOT_INO: u64 = 1;
 pub const TRASHCAN_INO: u64 = 2;
+/// Offset added to PFS3 anode numbers to produce FUSE inode numbers.
+/// Must be greater than all virtual inodes (FUSE_ROOT_INO, TRASHCAN_INO).
+const INODE_ANODE_OFFSET: u64 = 100;
 
 pub struct InodeInfo {
     pub attr: FileAttr,
@@ -125,7 +128,7 @@ pub fn anode_to_ino(anode: u32) -> u64 {
     if anode == ANODE_ROOTDIR {
         FUSE_ROOT_INO
     } else {
-        anode as u64 + 100
+        anode as u64 + INODE_ANODE_OFFSET
     }
 }
 
