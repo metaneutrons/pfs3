@@ -94,6 +94,32 @@ impl Writer {
         self.delete_in(parent_anode, &name)
     }
 
+    /// Set the volume name (max 30 characters).
+    pub fn set_volume_name(&mut self, name: &str) -> Result<()> {
+        let name_bytes = name.as_bytes();
+        let len = name_bytes.len().min(30);
+        self.vol.rootblock.diskname = name[..len].to_string();
+        // Patch the rootblock cluster in-place
+        let bs = self.vol.block_size() as usize;
+        let rblkcluster = self.vol.rootblock.rblkcluster as u32;
+        let cluster_size = rblkcluster as usize * bs;
+        let mut cluster = vec![0u8; cluster_size];
+        self.vol
+            .dev
+            .read_blocks(self.firstreserved as u64, rblkcluster, &mut cluster)?;
+        for b in &mut cluster[RB_OFF_DISKNAME..RB_OFF_DISKNAME + 32] {
+            *b = 0;
+        }
+        cluster[RB_OFF_DISKNAME] = len as u8;
+        cluster[RB_OFF_DISKNAME + 1..RB_OFF_DISKNAME + 1 + len].copy_from_slice(&name_bytes[..len]);
+        let ds = self.next_datestamp();
+        put_u32(&mut cluster, RB_OFF_DATESTAMP, ds);
+        self.vol
+            .dev
+            .write_blocks(self.firstreserved as u64, rblkcluster, &cluster)?;
+        self.vol.dev.flush()
+    }
+
     // ---- Anode-based API (for FUSE) ----
 
     /// Create a file in a directory identified by anode.

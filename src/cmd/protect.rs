@@ -1,19 +1,8 @@
 use anyhow::{Result, bail};
 use libpfs3::util;
-use libpfs3::volume::Volume;
 use libpfs3::writer::Writer;
-use std::path::Path;
 
-pub fn run(
-    image: &Path,
-    path: &str,
-    spec: &str,
-    offset: u64,
-    partition: Option<&str>,
-) -> Result<()> {
-    let vol = Volume::open_auto(image, offset, partition, true)?;
-    let mut w = Writer::open(vol)?;
-
+pub fn run_writer(w: &mut Writer, path: &str, spec: &str) -> Result<()> {
     let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if parts.is_empty() {
         bail!("cannot set protection on root directory");

@@ -37,6 +37,22 @@ impl ImageArgs {
         )?)
     }
 
+    /// Open a read-write volume, erroring if multiple partitions and none selected.
+    fn open_vol_rw(&self) -> Result<Volume> {
+        self.require_unambiguous()?;
+        Ok(Volume::open_auto(
+            &self.image,
+            self.offset,
+            self.partition.as_deref(),
+            true,
+        )?)
+    }
+
+    /// Open a Writer for the selected partition.
+    fn open_writer(&self) -> Result<libpfs3::writer::Writer> {
+        Ok(libpfs3::writer::Writer::open(self.open_vol_rw()?)?)
+    }
+
     /// Error if the image has multiple PFS3 partitions and the user didn't select one.
     fn require_unambiguous(&self) -> Result<()> {
         if self.partition.is_some() || self.offset != 0 {
@@ -208,41 +224,29 @@ fn main() -> Result<()> {
             )
         }
         Commands::Write { img, src, dest } => {
-            img.require_unambiguous()?;
-            cmd::write::run(
-                &img.image,
-                &src,
-                &dest,
-                img.offset,
-                img.partition.as_deref(),
-            )
+            let mut w = img.open_writer()?;
+            let data = std::fs::read(&src)?;
+            w.write_file(&dest, &data)?;
+            println!("Wrote {} ({} bytes) -> {}", src.display(), data.len(), dest);
+            Ok(())
         }
         Commands::Mkdir { img, path } => {
-            img.require_unambiguous()?;
-            cmd::write::mkdir(&img.image, &path, img.offset, img.partition.as_deref())
+            let mut w = img.open_writer()?;
+            w.create_dir(&path)?;
+            println!("Created directory: {}", path);
+            Ok(())
         }
         Commands::Rm { img, path } => {
-            img.require_unambiguous()?;
-            cmd::write::rm(&img.image, &path, img.offset, img.partition.as_deref())
+            let mut w = img.open_writer()?;
+            w.delete(&path)?;
+            println!("Removed: {}", path);
+            Ok(())
         }
         Commands::Protect { img, path, bits } => {
-            img.require_unambiguous()?;
-            cmd::protect::run(
-                &img.image,
-                &path,
-                &bits,
-                img.offset,
-                img.partition.as_deref(),
-            )
+            cmd::protect::run_writer(&mut img.open_writer()?, &path, &bits)
         }
         Commands::Tune { img, name } => {
-            img.require_unambiguous()?;
-            cmd::tune::run(
-                &img.image,
-                name.as_deref(),
-                img.offset,
-                img.partition.as_deref(),
-            )
+            cmd::tune::run_writer(&mut img.open_writer()?, name.as_deref())
         }
         Commands::Partitions { image } => {
             let parts = detect_pfs3_partitions(&image)?;
@@ -277,14 +281,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::Undelete { img, name, dest } => {
-            img.require_unambiguous()?;
-            cmd::write::undelete(
-                &img.image,
-                &name,
-                dest.as_deref(),
-                img.offset,
-                img.partition.as_deref(),
-            )
+            cmd::write::undelete(&mut img.open_writer()?, &name, dest.as_deref())
         }
     }
 }
