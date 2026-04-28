@@ -458,8 +458,9 @@ impl Writer {
         self.write_anode_fields(anodenr, 0, 0, 0)
     }
 
-    /// Update the fsize (and fsizex) of an existing directory entry in-place.
-    fn update_dir_entry_size(&mut self, dir_anode: u32, name: &str, new_size: u64) -> Result<()> {
+    /// Find a directory entry by name, returning (block_number, block_data, entry_offset).
+    /// Returns Error::NotFound if the entry doesn't exist.
+    fn find_dir_entry(&mut self, dir_anode: u32, name: &str) -> Result<(u32, Vec<u8>, usize)> {
         let chain =
             self.vol
                 .anodes
@@ -467,7 +468,7 @@ impl Writer {
         for an in &chain {
             for i in 0..an.clustersize {
                 let blk = an.blocknr + i;
-                let mut data = self.read_reserved_raw(blk)?;
+                let data = self.read_reserved_raw(blk)?;
                 if u16::from_be_bytes(data[0..2].try_into().unwrap()) != DBLKID {
                     continue;
                 }
@@ -480,79 +481,88 @@ impl Writer {
                     let nlen = data[pos + 17] as usize;
                     let ename = crate::util::latin1_to_string(&data[pos + 18..pos + 18 + nlen]);
                     if crate::util::name_eq_ci(&ename, name) {
-                        // Patch fsize (low 32 bits)
-                        put_u32(&mut data, pos + 6, new_size as u32);
-                        // Walk extra fields to patch fsizex if present
-                        let coff = pos + 18 + nlen;
-                        if coff < pos + esize {
-                            let clen = data[coff] as usize;
-                            let mut fp = coff + 1 + clen;
-                            if fp & 1 != 0 {
-                                fp += 1;
-                            }
-                            let end = pos + esize;
-                            if fp + 2 <= end {
-                                let flags =
-                                    u16::from_be_bytes(data[fp..fp + 2].try_into().unwrap());
-                                fp += 2;
-                                // Skip fields in order; bail via block if truncated
-                                'extra: {
-                                    if flags & 0x0001 != 0 {
-                                        fp += 4;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0002 != 0 {
-                                        fp += 2;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0004 != 0 {
-                                        fp += 2;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0008 != 0 {
-                                        fp += 4;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0010 != 0 {
-                                        fp += 4;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0020 != 0 {
-                                        fp += 4;
-                                        if fp > end {
-                                            break 'extra;
-                                        }
-                                    }
-                                    if flags & 0x0040 != 0 && fp + 2 <= end {
-                                        put_u16(&mut data, fp, (new_size >> 32) as u16);
-                                    }
-                                }
-                            }
-                        }
-                        // Update datestamp
-                        let (cday, cmin, ctick) = crate::util::current_amiga_datestamp();
-                        put_u16(&mut data, pos + 10, cday);
-                        put_u16(&mut data, pos + 12, cmin);
-                        put_u16(&mut data, pos + 14, ctick);
-                        put_u32(&mut data, 4, self.next_datestamp());
-                        self.write_reserved(blk, &data)?;
-                        return Ok(());
+                        return Ok((blk, data, pos));
                     }
                     pos += esize;
                 }
             }
         }
         Err(Error::NotFound(name.to_string()))
+    }
+
+    /// Update the fsize (and fsizex) of an existing directory entry in-place.
+    fn update_dir_entry_size(&mut self, dir_anode: u32, name: &str, new_size: u64) -> Result<()> {
+        let (blk, mut data, pos) = self.find_dir_entry(dir_anode, name)?;
+        let esize = data[pos] as usize;
+        let nlen = data[pos + 17] as usize;
+
+        // Patch fsize (low 32 bits)
+        put_u32(&mut data, pos + 6, new_size as u32);
+
+        // Walk extra fields to patch fsizex if present
+        let coff = pos + 18 + nlen;
+        if coff < pos + esize {
+            let clen = data[coff] as usize;
+            let mut fp = coff + 1 + clen;
+            if fp & 1 != 0 {
+                fp += 1;
+            }
+            let end = pos + esize;
+            if fp + 2 <= end {
+                let flags = u16::from_be_bytes(data[fp..fp + 2].try_into().unwrap());
+                fp += 2;
+                'extra: {
+                    if flags & 0x0001 != 0 {
+                        fp += 4;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0002 != 0 {
+                        fp += 2;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0004 != 0 {
+                        fp += 2;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0008 != 0 {
+                        fp += 4;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0010 != 0 {
+                        fp += 4;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0020 != 0 {
+                        fp += 4;
+                        if fp > end {
+                            break 'extra;
+                        }
+                    }
+                    if flags & 0x0040 != 0 && fp + 2 <= end {
+                        put_u16(&mut data, fp, (new_size >> 32) as u16);
+                    }
+                }
+            }
+        }
+
+        // Update datestamp
+        let (cday, cmin, ctick) = crate::util::current_amiga_datestamp();
+        put_u16(&mut data, pos + 10, cday);
+        put_u16(&mut data, pos + 12, cmin);
+        put_u16(&mut data, pos + 14, ctick);
+        put_u32(&mut data, 4, self.next_datestamp());
+        self.write_reserved(blk, &data)?;
+        Ok(())
     }
 
     /// Update the protection bits of an existing directory entry in-place.
@@ -562,36 +572,11 @@ impl Writer {
         name: &str,
         protection: u8,
     ) -> Result<()> {
-        let chain =
-            self.vol
-                .anodes
-                .get_chain(dir_anode, self.vol.dev.as_ref(), &mut self.vol.cache)?;
-        for an in &chain {
-            for i in 0..an.clustersize {
-                let blk = an.blocknr + i;
-                let mut data = self.read_reserved_raw(blk)?;
-                if u16::from_be_bytes(data[0..2].try_into().unwrap()) != DBLKID {
-                    continue;
-                }
-                let mut pos = DIR_BLOCK_HEADER_SIZE;
-                while pos < self.resblocksize as usize {
-                    let esize = data[pos] as usize;
-                    if esize == 0 {
-                        break;
-                    }
-                    let nlen = data[pos + 17] as usize;
-                    let ename = crate::util::latin1_to_string(&data[pos + 18..pos + 18 + nlen]);
-                    if crate::util::name_eq_ci(&ename, name) {
-                        data[pos + 16] = protection;
-                        put_u32(&mut data, 4, self.next_datestamp());
-                        self.write_reserved(blk, &data)?;
-                        return self.update_rootblock();
-                    }
-                    pos += esize;
-                }
-            }
-        }
-        Err(Error::NotFound(name.to_string()))
+        let (blk, mut data, pos) = self.find_dir_entry(dir_anode, name)?;
+        data[pos + 16] = protection;
+        put_u32(&mut data, 4, self.next_datestamp());
+        self.write_reserved(blk, &data)?;
+        self.update_rootblock()
     }
 
     pub fn rename_in(
@@ -1036,41 +1021,17 @@ impl Writer {
     }
 
     fn remove_dir_entry(&mut self, dir_anode: u32, name: &str) -> Result<()> {
-        let chain =
-            self.vol
-                .anodes
-                .get_chain(dir_anode, self.vol.dev.as_ref(), &mut self.vol.cache)?;
-        for an in &chain {
-            for i in 0..an.clustersize {
-                let blk = an.blocknr + i;
-                let mut data = self.read_reserved_raw(blk)?;
-                if u16::from_be_bytes(data[0..2].try_into().unwrap()) != DBLKID {
-                    continue;
-                }
-                let mut pos = DIR_BLOCK_HEADER_SIZE;
-                while pos < self.resblocksize as usize {
-                    let esize = data[pos] as usize;
-                    if esize == 0 {
-                        break;
-                    }
-                    let nlen = data[pos + 17] as usize;
-                    let ename = crate::util::latin1_to_string(&data[pos + 18..pos + 18 + nlen]);
-                    if crate::util::name_eq_ci(&ename, name) {
-                        let end = pos + esize;
-                        let remaining = self.resblocksize as usize - end;
-                        data.copy_within(end..end + remaining, pos);
-                        for b in &mut data[pos + remaining..pos + remaining + esize] {
-                            *b = 0;
-                        }
-                        put_u32(&mut data, 4, self.next_datestamp());
-                        self.write_reserved(blk, &data)?;
-                        return Ok(());
-                    }
-                    pos += esize;
-                }
-            }
+        let (blk, mut data, pos) = self.find_dir_entry(dir_anode, name)?;
+        let esize = data[pos] as usize;
+        let end = pos + esize;
+        let remaining = self.resblocksize as usize - end;
+        data.copy_within(end..end + remaining, pos);
+        for b in &mut data[pos + remaining..pos + remaining + esize] {
+            *b = 0;
         }
-        Err(Error::NotFound(name.to_string()))
+        put_u32(&mut data, 4, self.next_datestamp());
+        self.write_reserved(blk, &data)?;
+        Ok(())
     }
 
     fn build_dir_entry(
