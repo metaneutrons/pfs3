@@ -211,7 +211,7 @@ pub fn run(image: &Path, offset: u64, partition: Option<&str>, repair: bool) -> 
 }
 
 fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
-    const MAX_DEPTH: usize = 128;
+    const MAX_DEPTH: usize = libpfs3::ondisk::MAX_DIR_DEPTH;
     let depth = path.matches('/').count();
     if depth > MAX_DEPTH {
         println!("  ERROR: directory nesting too deep at {}", path);

@@ -71,6 +71,9 @@ pub const MAXBITMAPINDEX: usize = 103;
 pub const MAXSMALLINDEXNR: usize = 98;
 pub const MAXSUPER: usize = 15;
 
+/// Maximum directory nesting depth (prevents infinite loops on corrupt images).
+pub const MAX_DIR_DEPTH: usize = 128;
+
 // ---- Predefined anode numbers ----
 
 pub const ANODE_EOF: u32 = 0;

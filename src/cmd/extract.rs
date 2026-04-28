@@ -28,7 +28,7 @@ pub fn run_vol(vol: &mut Volume, path: &str, output: &Path) -> Result<()> {
 }
 
 fn extract_dir(vol: &mut Volume, dir_anode: u32, output: &Path, display_path: &str) -> Result<()> {
-    const MAX_DEPTH: usize = 128;
+    const MAX_DEPTH: usize = libpfs3::ondisk::MAX_DIR_DEPTH;
     if display_path.matches('/').count() > MAX_DEPTH {
         anyhow::bail!("directory nesting too deep at {}", display_path);
     }
