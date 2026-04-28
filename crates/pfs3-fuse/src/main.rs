@@ -637,28 +637,36 @@ impl Filesystem for Pfs3Fs {
         reply: ReplyEmpty,
     ) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some((parent_anode, name, data)) = inner.write_bufs.remove(&ino) {
+        if let Some((parent_anode, name, data)) = inner.write_bufs.get(&ino) {
             if !data.is_empty() {
                 let file_anode = inner.inodes.get(&ino).map(|i| i.anode).unwrap_or(0);
+                // Clone values needed for the write to release the immutable borrow
+                let parent_anode = *parent_anode;
+                let name = name.clone();
+                let data = data.clone();
                 let result = match inner.access.writer() {
                     Some(w) if file_anode != 0 => {
                         w.overwrite_file_in(parent_anode, &name, file_anode, &data)
                     }
                     _ => {
+                        inner.write_bufs.remove(&ino);
                         reply.ok();
                         return;
                     }
                 };
                 if result.is_err() {
+                    // Keep buffer so data isn't lost; user can retry via fsync
                     reply.error(EIO);
                     return;
                 }
+                let len = data.len() as u64;
                 if let Some(info) = inner.inodes.get_mut(&ino) {
-                    info.attr.size = data.len() as u64;
-                    info.attr.blocks = data.len().div_ceil(self.block_size as usize) as u64;
+                    info.attr.size = len;
+                    info.attr.blocks = (len as usize).div_ceil(self.block_size as usize) as u64;
                 }
             }
         }
+        inner.write_bufs.remove(&ino);
         reply.ok();
     }
 
