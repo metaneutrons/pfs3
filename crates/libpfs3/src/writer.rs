@@ -727,10 +727,14 @@ impl Writer {
                 }
                 for bit in 0..32u32 {
                     if longs[li] & (0x8000_0000 >> bit) != 0 {
-                        let data_blk = bm_idx as u32 * self.index_per_block * 32
-                            + li as u32 * 32
-                            + bit
-                            + self.bitmapstart;
+                        let data_blk = (bm_idx as u32)
+                            .checked_mul(self.index_per_block)
+                            .and_then(|v| v.checked_mul(32))
+                            .and_then(|v| v.checked_add(li as u32 * 32 + bit))
+                            .and_then(|v| v.checked_add(self.bitmapstart))
+                            .ok_or_else(|| {
+                                Error::Corrupt("block number overflow in bitmap".into())
+                            })?;
                         longs[li] &= !(0x8000_0000 >> bit);
                         allocated.push(data_blk);
                         if allocated.len() as u32 == count {
