@@ -27,3 +27,8 @@ doc = false
 name = "fuzz_volume"
 path = "fuzz_targets/fuzz_volume.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_writer"
+path = "fuzz_targets/fuzz_writer.rs"
+doc = false
