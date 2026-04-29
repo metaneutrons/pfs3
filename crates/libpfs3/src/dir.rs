@@ -84,14 +84,21 @@ pub fn resolve_path(
 
     let mut dir_anode = ANODE_ROOTDIR;
     for (i, part) in parts.iter().enumerate() {
-        let entry = lookup(dir_anode, part, anodes, dev, cache, reserved_blksize)?;
+        let result = lookup(dir_anode, part, anodes, dev, cache, reserved_blksize);
         if i < parts.len() - 1 {
+            // Intermediate component must exist and be a directory
+            let entry = result?;
             if !entry.is_dir() {
                 return Err(Error::NotADirectory);
             }
             dir_anode = entry.anode;
         } else {
-            return Ok(Some(entry));
+            // Final component: NotFound → Ok(None)
+            match result {
+                Ok(entry) => return Ok(Some(entry)),
+                Err(Error::NotFound(_)) => return Ok(None),
+                Err(e) => return Err(e),
+            }
         }
     }
     Ok(None)

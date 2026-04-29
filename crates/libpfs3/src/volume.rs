@@ -49,6 +49,7 @@ impl Volume {
         };
 
         let mut cache = BlockCache::new();
+        Self::validate_rbs(&rootblock)?;
         let rootblock_ext = if rootblock.has_extension() {
             let rbs = rootblock.reserved_blksize;
             let data = cache.read_reserved(dev.as_ref(), rootblock.extension as u64, rbs)?;
@@ -59,7 +60,6 @@ impl Volume {
 
         let anodes = AnodeReader::new(&rootblock, rootblock_ext.as_ref());
         let bitmap = BitmapReader::new(&rootblock);
-        Self::validate_rbs(&rootblock)?;
 
         Ok(Self {
             dev,

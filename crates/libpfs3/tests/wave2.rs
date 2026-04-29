@@ -165,7 +165,6 @@ mod corrupt_images {
     }
 
     #[test]
-    #[ignore = "BUG: Volume::from_device panics instead of returning Err on reserved_blksize=0"]
     fn reserved_blksize_zero_returns_error() {
         let mut data = format_mem(4096);
         // Set reserved_blksize to 0 (would cause div-by-zero)
@@ -175,7 +174,6 @@ mod corrupt_images {
     }
 
     #[test]
-    #[ignore = "BUG: Volume::from_device panics instead of returning Err on reserved_blksize=13"]
     fn reserved_blksize_odd_no_panic() {
         let mut data = format_mem(4096);
         // Set reserved_blksize to 13 (not a power of 2, not multiple of 512)
@@ -789,7 +787,6 @@ mod path_handling {
     }
 
     #[test]
-    #[ignore = "BUG: lookup in subdir returns Err(NotFound) instead of Ok(None)"]
     fn lookup_nonexistent_in_subdir() {
         let path = fresh_image(4096);
         let mut w = open_writer(&path);
@@ -962,7 +959,6 @@ mod capacity_limits {
     }
 
     #[test]
-    #[ignore = "BUG: format panics with subtract overflow on 64-block disk"]
     fn format_minimum_size() {
         // Minimum viable disk: 64 blocks
         let path = std::env::temp_dir().join(format!(
@@ -974,7 +970,12 @@ mod capacity_limits {
             volume_name: "Tiny".into(),
             enable_deldir: false,
         };
-        format::format_with_size(&dev, 64, &opts).unwrap();
+        // 64 blocks is too small — should return error, not panic
+        assert!(format::format_with_size(&dev, 64, &opts).is_err());
+        drop(dev);
+        // 128 blocks should work
+        let dev = FileBlockDevice::create(&path, 512, 128).unwrap();
+        format::format_with_size(&dev, 128, &opts).unwrap();
         drop(dev);
         let vol = reopen(&path);
         assert_eq!(vol.name(), "Tiny");

@@ -124,6 +124,15 @@ impl Writer {
 
     /// Create a file in a directory identified by anode.
     pub fn write_file_in(&mut self, parent_anode: u32, name: &str, data: &[u8]) -> Result<()> {
+        // Check if file already exists — if so, overwrite it
+        if let Ok((_, entry_data, pos)) = self.find_dir_entry(parent_anode, name) {
+            let entry_type = entry_data[pos + 1] as i8;
+            if entry_type == ST_FILE || entry_type == ST_ROLLOVERFILE {
+                let file_anode =
+                    u32::from_be_bytes(entry_data[pos + 2..pos + 6].try_into().unwrap());
+                return self.overwrite_file_in(parent_anode, name, file_anode, data);
+            }
+        }
         self.write_file_in_no_commit(parent_anode, name, data)?;
         self.update_rootblock()
     }
@@ -888,7 +897,22 @@ impl Writer {
         for seqnr in 0..256u32 {
             let blk_num = self.get_anode_block_nr(seqnr)?;
             if blk_num == 0 {
-                break;
+                // No anode block at this seqnr — allocate one
+                let new_blk = self.alloc_anode_block(seqnr)?;
+                // Now use the first usable slot in the new block
+                let mut data = self.read_reserved_raw(new_blk)?;
+                let anodenr = if split {
+                    (seqnr << 16) | ANODE_USERFIRST
+                } else {
+                    seqnr * self.anodes_per_block + ANODE_USERFIRST
+                };
+                let base = ANODE_BLOCK_HEADER_SIZE + ANODE_USERFIRST as usize * ANODE_SIZE;
+                put_u32(&mut data, base, clustersize);
+                put_u32(&mut data, base + 4, blocknr);
+                put_u32(&mut data, base + 8, next);
+                put_u32(&mut data, 4, self.datestamp);
+                self.write_reserved(new_blk, &data)?;
+                return Ok(anodenr);
             }
             let mut data = self.read_reserved_raw(blk_num)?;
             if u16::from_be_bytes(data[0..2].try_into().unwrap()) != ABLKID {
@@ -917,6 +941,94 @@ impl Writer {
             }
         }
         Err(Error::DiskFull("no free anode slots".into()))
+    }
+
+    /// Allocate a new anode block and register it in the index.
+    fn alloc_anode_block(&mut self, seqnr: u32) -> Result<u32> {
+        let new_blk = self.alloc_reserved_block()?;
+
+        // Initialize the anode block
+        let mut data = vec![0u8; self.resblocksize as usize];
+        put_u16(&mut data, 0, ABLKID);
+        put_u32(&mut data, 4, self.next_datestamp());
+        put_u32(&mut data, 8, seqnr);
+        self.write_reserved(new_blk, &data)?;
+
+        // Register in the index
+        let ipb = self.index_per_block;
+        let idx_nr = seqnr / ipb;
+        let idx_off = seqnr % ipb;
+
+        if self.vol.rootblock.is_large() {
+            // Large mode: superindex → index block → anode block
+            let super_nr = seqnr / (ipb * ipb);
+            let remainder = seqnr % (ipb * ipb);
+            let idx_in_super = remainder / ipb;
+            let off_in_idx = remainder % ipb;
+
+            let super_blk = self
+                .vol
+                .rootblock_ext
+                .as_ref()
+                .and_then(|e| e.superindex.get(super_nr as usize).copied())
+                .unwrap_or(0);
+            if super_blk == 0 {
+                return Err(Error::DiskFull("no superindex slot available".into()));
+            }
+            let idx_blk = {
+                let sdata = self.vol.cache.read_reserved(
+                    self.vol.dev.as_ref(),
+                    super_blk as u64,
+                    self.resblocksize as u16,
+                )?;
+                let off = INDEX_BLOCK_HEADER_SIZE + idx_in_super as usize * 4;
+                u32::from_be_bytes(sdata[off..off + 4].try_into().unwrap())
+            };
+            if idx_blk == 0 {
+                // Need to allocate an index block too
+                let new_idx = self.alloc_reserved_block()?;
+                let mut idata = vec![0u8; self.resblocksize as usize];
+                put_u16(&mut idata, 0, IBLKID);
+                put_u32(&mut idata, 4, self.next_datestamp());
+                put_u32(&mut idata, 8, idx_in_super);
+                let entry_off = INDEX_BLOCK_HEADER_SIZE + off_in_idx as usize * 4;
+                put_u32(&mut idata, entry_off, new_blk);
+                self.write_reserved(new_idx, &idata)?;
+                // Update super block
+                let mut sdata = self.read_reserved_raw(super_blk)?;
+                let soff = INDEX_BLOCK_HEADER_SIZE + idx_in_super as usize * 4;
+                put_u32(&mut sdata, soff, new_idx);
+                put_u32(&mut sdata, 4, self.datestamp);
+                self.write_reserved(super_blk, &sdata)?;
+            } else {
+                let mut idata = self.read_reserved_raw(idx_blk)?;
+                let entry_off = INDEX_BLOCK_HEADER_SIZE + off_in_idx as usize * 4;
+                put_u32(&mut idata, entry_off, new_blk);
+                put_u32(&mut idata, 4, self.datestamp);
+                self.write_reserved(idx_blk, &idata)?;
+            }
+        } else {
+            // Small mode: rootblock.indexblocks[idx_nr] → index block
+            let idx_blk = self
+                .vol
+                .rootblock
+                .indexblocks
+                .get(idx_nr as usize)
+                .copied()
+                .unwrap_or(0);
+            if idx_blk == 0 {
+                return Err(Error::DiskFull("no index block slot available".into()));
+            }
+            let mut idata = self.read_reserved_raw(idx_blk)?;
+            let entry_off = INDEX_BLOCK_HEADER_SIZE + idx_off as usize * 4;
+            put_u32(&mut idata, entry_off, new_blk);
+            put_u32(&mut idata, 4, self.datestamp);
+            self.write_reserved(idx_blk, &idata)?;
+        }
+
+        // Invalidate cache for the anode reader
+        self.vol.cache.invalidate(new_blk as u64);
+        Ok(new_blk)
     }
 
     fn create_anode_chain(&mut self, blocks: &[u32]) -> Result<u32> {

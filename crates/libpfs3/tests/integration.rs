@@ -156,7 +156,7 @@ macro_rules! tests_for_image {
             #[test]
             fn lookup_nonexistent() {
                 let mut vol = $opener();
-                assert!(vol.lookup("__nonexistent_file_42__").is_err());
+                assert!(vol.lookup("__nonexistent_file_42__").unwrap().is_none());
             }
 
             #[test]

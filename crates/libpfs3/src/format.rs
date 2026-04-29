@@ -12,7 +12,7 @@
 //! 6. Allocate and write anode index + anode block (with ANODE_ROOTDIR)
 //! 7. Write root directory block (empty)
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::io::BlockDevice;
 use crate::ondisk::*;
 
@@ -112,7 +112,15 @@ pub fn format_with_size(
     let index_per_block = (resblocksize / 4) - 3;
 
     // Data blocks
-    let data_blocks = total_blocks as u32 - (lastreserved - firstreserved + 1) - firstreserved;
+    let reserved_area = (lastreserved - firstreserved + 1) + firstreserved;
+    if total_blocks as u32 <= reserved_area {
+        return Err(Error::DiskFull(format!(
+            "disk too small: {} blocks, need at least {} for reserved area",
+            total_blocks,
+            reserved_area + 1
+        )));
+    }
+    let data_blocks = total_blocks as u32 - reserved_area;
     let bits_per_bmb = index_per_block * 32;
     let no_bmb = data_blocks.div_ceil(bits_per_bmb);
     let no_bmi = no_bmb.div_ceil(index_per_block);
