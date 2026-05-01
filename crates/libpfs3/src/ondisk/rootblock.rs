@@ -148,6 +148,18 @@ impl Rootblock {
     pub fn has_flag(&self, flag: u32) -> bool {
         self.options & flag != 0
     }
+
+    /// Number of u32 index entries per reserved block (used for bitmap/anode indexing).
+    pub fn index_per_block(&self) -> u32 {
+        (self.reserved_blksize as u32 / 4).saturating_sub(3)
+    }
+
+    /// Number of anodes that fit in one reserved block.
+    pub fn anodes_per_block(&self) -> u32 {
+        (self.reserved_blksize as u32).saturating_sub(ANODE_BLOCK_HEADER_SIZE as u32)
+            / ANODE_SIZE as u32
+    }
+
     pub fn is_large(&self) -> bool {
         self.has_flag(MODE_SUPERINDEX)
     }

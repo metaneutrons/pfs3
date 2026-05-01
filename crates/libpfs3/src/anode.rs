@@ -34,9 +34,8 @@ impl AnodeReader {
         let rbs = rb.reserved_blksize;
         Self {
             reserved_blksize: rbs,
-            anodes_per_block: (rbs as u32).saturating_sub(ANODE_BLOCK_HEADER_SIZE as u32)
-                / ANODE_SIZE as u32,
-            index_per_block: (rbs as u32 / 4).saturating_sub(3),
+            anodes_per_block: rb.anodes_per_block(),
+            index_per_block: rb.index_per_block(),
             split_mode: rb.is_splitted_anodes(),
             is_large: rb.is_large(),
             indexblocks: rb.indexblocks.clone(),

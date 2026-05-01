@@ -5,6 +5,13 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::ondisk::PFS_TYPES;
 
+/// RDSK block signature.
+const RDSK_MAGIC: u32 = 0x5244_534B;
+/// PART block signature.
+const PART_MAGIC: u32 = 0x5041_5254;
+/// Offset of rdb_highblock field in RDSK header.
+const RDB_HIGHBLOCK_OFF: usize = 0x0C;
+
 /// RDB dostype identifiers for PFS3-compatible filesystem handlers.
 /// These appear in the partition environment vector, not in the rootblock.
 /// PFS\3 = pfs3aio handler, PDS\3 = pds3 (Professional DOS) handler.
@@ -38,12 +45,16 @@ pub fn detect_pfs3_partitions(path: &Path) -> Result<Vec<PartitionInfo>> {
 
     f.read_exact(&mut buf)?;
     let sig = u32::from_be_bytes(buf[0..4].try_into().unwrap());
-    if sig != 0x5244_534B {
+    if sig != RDSK_MAGIC {
         return Ok(Vec::new()); // not RDB
     }
 
-    // Read rdb_highblock from RDSK header (offset 0x0C)
-    let rdb_highblock = u32::from_be_bytes(buf[0x0C..0x10].try_into().unwrap()) as u64;
+    // Read rdb_highblock from RDSK header
+    let rdb_highblock = u32::from_be_bytes(
+        buf[RDB_HIGHBLOCK_OFF..RDB_HIGHBLOCK_OFF + 4]
+            .try_into()
+            .unwrap(),
+    ) as u64;
     let scan_limit = rdb_highblock.min(1023) + 1; // cap at 1024 for safety
 
     let mut partitions = Vec::new();
@@ -52,7 +63,7 @@ pub fn detect_pfs3_partitions(path: &Path) -> Result<Vec<PartitionInfo>> {
         if f.read(&mut buf)? < 512 {
             break;
         }
-        if u32::from_be_bytes(buf[0..4].try_into().unwrap()) != 0x5041_5254 {
+        if u32::from_be_bytes(buf[0..4].try_into().unwrap()) != PART_MAGIC {
             continue;
         }
 

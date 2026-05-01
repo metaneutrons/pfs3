@@ -20,7 +20,7 @@ impl BitmapReader {
     pub fn new(rb: &Rootblock) -> Self {
         Self {
             reserved_blksize: rb.reserved_blksize,
-            index_per_block: (rb.reserved_blksize as u32 / 4).saturating_sub(3),
+            index_per_block: rb.index_per_block(),
             bitmapindex: rb.bitmapindex.clone(),
         }
     }

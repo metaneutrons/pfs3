@@ -173,6 +173,9 @@ impl DirEntry {
     pub fn is_file(&self) -> bool {
         self.entry_type < 0 && self.entry_type != ST_ROLLOVERFILE
     }
+    pub fn is_rollover(&self) -> bool {
+        self.entry_type == ST_ROLLOVERFILE
+    }
     pub fn is_dir(&self) -> bool {
         self.entry_type == ST_USERDIR
     }

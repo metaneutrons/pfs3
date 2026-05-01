@@ -15,6 +15,9 @@ pub const TRASHCAN_INO: u64 = 2;
 /// Offset added to PFS3 anode numbers to produce FUSE inode numbers.
 /// Must be greater than all virtual inodes (FUSE_ROOT_INO, TRASHCAN_INO).
 const INODE_ANODE_OFFSET: u64 = 100;
+/// Base inode for deldir entries. Uses a high range to avoid collision
+/// with regular file inodes (which start at INODE_ANODE_OFFSET).
+const DELDIR_INO_BASE: u64 = 0x8000_0000;
 
 pub struct InodeInfo {
     pub attr: FileAttr,
@@ -91,7 +94,7 @@ pub fn rebuild_deldir(inner: &mut FsInner) {
         };
         *count += 1;
 
-        let ino = TRASHCAN_INO + 1 + i as u64;
+        let ino = DELDIR_INO_BASE + i as u64;
         let time = util::amiga_to_systime(e.creation_day, e.creation_minute, e.creation_tick);
         inner.deldir.push(DeldirEntry {
             ino,
@@ -195,6 +198,7 @@ impl Pfs3Fs {
         let vol = access.vol();
         let block_size = vol.block_size();
         let rb = &vol.rootblock;
+        // SAFETY: getuid/getgid are always safe to call (no preconditions).
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
         let time = util::amiga_to_systime(rb.creation_day, rb.creation_minute, rb.creation_tick);

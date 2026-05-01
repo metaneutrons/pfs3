@@ -15,6 +15,7 @@
 use crate::error::{Error, Result};
 use crate::io::BlockDevice;
 use crate::ondisk::*;
+use crate::util::current_amiga_datestamp;
 
 /// Options for formatting a new PFS3 volume.
 pub struct FormatOptions {
@@ -108,8 +109,8 @@ pub fn format_with_size(
     // Timestamp (current time as Amiga datestamp)
     let (cday, cmin, ctick) = current_amiga_datestamp();
 
-    // Index geometry
-    let index_per_block = (resblocksize / 4) - 3;
+    // Index geometry — same formula as Rootblock::index_per_block()
+    let index_per_block = (resblocksize / 4).saturating_sub(3);
 
     // Data blocks
     let reserved_area = (lastreserved - firstreserved + 1) + firstreserved;
@@ -325,7 +326,6 @@ const MAXSMALLDISK: u64 = (MAXSMALLBITMAPINDEX as u64 + 1) * 253 * 253 * 32;
 const MAXNUMRESERVED: usize = 4096 + 255 * 1024 * 8;
 
 // Re-export for backward compatibility.
-pub use crate::util::current_amiga_datestamp;
 
 // --- Reserved block allocator ---
 

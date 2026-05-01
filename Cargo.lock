@@ -363,7 +363,6 @@ name = "libpfs3"
 version = "0.1.2"
 dependencies = [
  "byteorder",
- "log",
  "sevenz-rust",
  "thiserror",
 ]

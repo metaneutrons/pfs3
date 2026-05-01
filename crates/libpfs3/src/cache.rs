@@ -1,4 +1,5 @@
-//! O(1) LRU block cache for reserved blocks (dirblocks, anodeblocks, indexblocks).
+//! Block cache for reserved blocks (dirblocks, anodeblocks, indexblocks).
+//! O(1) access via HashMap, O(n) eviction on capacity overflow (rare at n=256).
 
 use std::collections::HashMap;
 

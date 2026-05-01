@@ -12,7 +12,6 @@ categories = ["filesystem", "parser-implementations"]
 [dependencies]
 byteorder = "1"
 thiserror = "2"
-log = "0.4"
 
 [dev-dependencies]
 sevenz-rust = "0.6"

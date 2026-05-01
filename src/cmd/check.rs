@@ -228,12 +228,7 @@ fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
     };
 
     for entry in &entries {
-        let entry_path = format!(
-            "{}{}{}",
-            path,
-            if path.ends_with('/') { "" } else { "/" },
-            entry.name
-        );
+        let entry_path = libpfs3::util::join_pfs3_path(path, &entry.name);
 
         if entry.is_dir() {
             ctx.dirs += 1;

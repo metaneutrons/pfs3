@@ -85,6 +85,9 @@ pub const ANODE_USERFIRST: u32 = 6;
 pub const BOOTBLOCK: u64 = 0;
 pub const ROOTBLOCK: u64 = 2;
 
+/// Standard Amiga sector size in bytes.
+pub const SECTOR_SIZE: u32 = 512;
+
 // ---- Directory entry types ----
 
 pub const ST_FILE: i8 = -3;

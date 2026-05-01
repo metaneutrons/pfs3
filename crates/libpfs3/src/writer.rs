@@ -23,6 +23,7 @@ pub struct Writer {
     firstreserved: u32,
     numreserved: u32,
     bitmapstart: u32,
+    /// Authoritative datestamp counter (copied from rootblock on open, incremented on each commit).
     datestamp: u32,
     // Mutable state
     res_bitmap: Vec<u32>,
@@ -39,9 +40,8 @@ impl Writer {
         let rescluster = rbs / vol.block_size();
         let firstreserved = rb.firstreserved;
         let numreserved = (rb.lastreserved - firstreserved + 1) / rescluster;
-        let index_per_block = (rbs / 4).saturating_sub(3);
-        let anodes_per_block =
-            rbs.saturating_sub(ANODE_BLOCK_HEADER_SIZE as u32) / ANODE_SIZE as u32;
+        let index_per_block = rb.index_per_block();
+        let anodes_per_block = rb.anodes_per_block();
         let bitmapstart = rb.lastreserved + 1;
         let datestamp = rb.datestamp;
 
@@ -76,7 +76,7 @@ impl Writer {
 
     // ---- High-level API (path-based, for CLI) ----
 
-    /// Write a file at the given path (creates parent dirs as needed).
+    /// Write a file at the given path. Parent directories must exist.
     pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<()> {
         let (parent_anode, filename) = self.split_path(path)?;
         self.write_file_in(parent_anode, &filename, data)
@@ -740,7 +740,8 @@ impl Writer {
         let no_bmb = {
             let bits_per_bmb = self.index_per_block * 32;
             let ds = self.vol.rootblock.disksize;
-            ds.div_ceil(bits_per_bmb)
+            // Cap at a reasonable maximum to prevent OOM on corrupt disksize
+            ds.div_ceil(bits_per_bmb).min(16384)
         };
         for seq in 0..no_bmb {
             if let Some(blk) = self.get_bitmap_block_nr(seq)? {
@@ -777,6 +778,9 @@ impl Writer {
                             .ok_or_else(|| {
                                 Error::Corrupt("block number overflow in bitmap".into())
                             })?;
+                        if data_blk >= self.vol.rootblock.disksize + self.bitmapstart {
+                            continue; // skip out-of-range bitmap bits
+                        }
                         longs[li] &= !(0x8000_0000 >> bit);
                         allocated.push(data_blk);
                         if allocated.len() as u32 == count {

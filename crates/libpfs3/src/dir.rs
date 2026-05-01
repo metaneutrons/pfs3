@@ -69,7 +69,9 @@ pub fn lookup(
 }
 
 /// Resolve a '/'-separated path to a DirEntry.
-/// Returns None for the root directory itself.
+/// Returns `Ok(None)` for the root directory or if the final component doesn't exist.
+/// Returns `Err(NotFound)` if an intermediate directory doesn't exist.
+/// Returns `Err(NotADirectory)` if an intermediate component is a file.
 pub fn resolve_path(
     path: &str,
     anodes: &AnodeReader,

@@ -136,7 +136,7 @@ impl Volume {
         }
     }
 
-    fn find_partition_offset(path: &Path, name: &str) -> Result<u64> {
+    pub fn find_partition_offset(path: &Path, name: &str) -> Result<u64> {
         let parts = detect_pfs3_partitions(path)?;
         let part = parts
             .iter()

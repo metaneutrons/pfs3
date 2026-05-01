@@ -171,3 +171,12 @@ pub fn current_amiga_datestamp() -> (u16, u16, u16) {
     let ticks = ((amiga_secs % 60) * 50) as u16;
     (days, mins, ticks)
 }
+
+/// Join a parent path and a filename with a single '/'.
+pub fn join_pfs3_path(parent: &str, name: &str) -> String {
+    if parent.ends_with('/') {
+        format!("{}{}", parent, name)
+    } else {
+        format!("{}/{}", parent, name)
+    }
+}

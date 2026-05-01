@@ -138,6 +138,9 @@ impl BlockDevice for FileBlockDevice {
         if !self.writable {
             return Err(Error::ReadOnly);
         }
+        if self.total_blocks > 0 && block + count as u64 > self.total_blocks {
+            return Err(Error::BlockOutOfRange(block));
+        }
         let offset = self.partition_offset + block * self.block_bytes as u64;
         let len = count as usize * self.block_bytes as usize;
         let mut file = self.file.lock().unwrap();

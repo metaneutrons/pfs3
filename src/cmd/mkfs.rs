@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 use libpfs3::format::{self, FormatOptions};
 use libpfs3::io::FileBlockDevice;
 use libpfs3::rdb::detect_pfs3_partition;
+use libpfs3::volume::Volume;
 use std::path::Path;
 
 pub fn run(
@@ -18,7 +19,13 @@ pub fn run(
         let d = FileBlockDevice::create(image, block_bytes, total)?;
         (d, total)
     } else if image.exists() {
-        let actual_offset = resolve_offset(image, offset, partition)?;
+        let actual_offset = if let Some(name) = partition {
+            Volume::find_partition_offset(image, name)?
+        } else if offset == 0 {
+            detect_pfs3_partition(image).unwrap_or(0)
+        } else {
+            offset
+        };
         let d = FileBlockDevice::open_rw(image, block_bytes, actual_offset, 0)?;
         let total = d.total_blocks();
         (d, total)
@@ -57,27 +64,4 @@ pub fn run(
     println!("Done.");
 
     Ok(())
-}
-
-fn resolve_offset(image: &Path, offset: u64, partition: Option<&str>) -> Result<u64> {
-    if let Some(name) = partition {
-        let parts = libpfs3::volume::detect_pfs3_partitions(image)?;
-        let p = parts
-            .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(name))
-            .or_else(|| name.parse::<usize>().ok().and_then(|i| parts.get(i)))
-            .ok_or_else(|| {
-                let names: Vec<_> = parts.iter().map(|p| p.name.as_str()).collect();
-                anyhow::anyhow!(
-                    "partition '{}' not found (available: {})",
-                    name,
-                    names.join(", ")
-                )
-            })?;
-        Ok(p.offset)
-    } else if offset == 0 {
-        Ok(detect_pfs3_partition(image).unwrap_or(0))
-    } else {
-        Ok(offset)
-    }
 }

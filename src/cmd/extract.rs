@@ -34,12 +34,7 @@ fn extract_dir(vol: &mut Volume, dir_anode: u32, output: &Path, display_path: &s
     }
     let entries = vol.list_dir_by_anode(dir_anode)?;
     for entry in &entries {
-        let entry_path = format!(
-            "{}{}{}",
-            display_path,
-            if display_path.ends_with('/') { "" } else { "/" },
-            entry.name
-        );
+        let entry_path = libpfs3::util::join_pfs3_path(display_path, &entry.name);
         let out_path = output.join(&entry.name);
 
         if entry.is_dir() {
