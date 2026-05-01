@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/metaneutrons/pfs3/compare/v0.1.2...v0.1.3) (2026-05-01)
+
+
+### Bug Fixes
+
+* address all audit findings (C1-C3, H1-H6, M1-M6, L1-L8) ([76e711f](https://github.com/metaneutrons/pfs3/commit/76e711f68c620293f0744d3aab5dcd8bf28e4db3))
+* **libpfs3:** fix all 11 discovered bugs, all 173 tests green ([8d586c1](https://github.com/metaneutrons/pfs3/commit/8d586c16255f1961410f28a2f1a42fe7016d5fdc))
+
 ## [0.1.2](https://github.com/metaneutrons/pfs3/compare/v0.1.1...v0.1.2) (2026-04-28)
 
 
