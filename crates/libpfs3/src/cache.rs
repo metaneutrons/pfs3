@@ -52,9 +52,9 @@ impl BlockCache {
         let g = self.generation;
 
         if self.entries.contains_key(&block) {
-            let entry = self.entries.get_mut(&block).unwrap();
-            entry.generation = g;
-            return Ok(&entry.data);
+            // SAFETY: key existence confirmed on the line above, single-threaded access.
+            self.entries.get_mut(&block).unwrap().generation = g;
+            return Ok(&self.entries[&block].data);
         }
 
         // Read from disk

@@ -35,6 +35,13 @@ pub struct FileBlockDevice {
 }
 
 impl FileBlockDevice {
+    /// Lock the file mutex, converting poisoned mutex to I/O error.
+    fn lock_file(&self) -> Result<std::sync::MutexGuard<'_, File>> {
+        self.file
+            .lock()
+            .map_err(|_| Error::Io(std::io::Error::other("file mutex poisoned")))
+    }
+
     /// Open a file as a read-only block device.
     pub fn open(
         path: &std::path::Path,
@@ -120,7 +127,7 @@ impl BlockDevice for FileBlockDevice {
         if buf.len() < len {
             return Err(Error::TooShort("read buffer"));
         }
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.lock_file()?;
         file.seek(SeekFrom::Start(offset))?;
         file.read_exact(&mut buf[..len])?;
         Ok(())
@@ -143,14 +150,14 @@ impl BlockDevice for FileBlockDevice {
         }
         let offset = self.partition_offset + block * self.block_bytes as u64;
         let len = count as usize * self.block_bytes as usize;
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.lock_file()?;
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(&data[..len])?;
         Ok(())
     }
 
     fn flush(&self) -> Result<()> {
-        let file = self.file.lock().unwrap();
+        let file = self.lock_file()?;
         file.sync_all()?;
         Ok(())
     }
