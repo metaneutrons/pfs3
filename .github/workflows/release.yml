@@ -1,218 +1,457 @@
+# Hardened release pipeline.
+#
+# There is deliberately NO tag trigger. release-please.yml dispatches this
+# workflow against the tag it created; with both, every tag started two
+# pipelines. Actions loads the workflow from the dispatched ref, so a fix on
+# main never reaches an existing tag: every run permanently consumes a tag
+# identity.
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v0.1.0)'
+        description: 'Release tag, for example v0.1.4'
         required: true
         type: string
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  # Debian 12, glibc 2.36. The Linux binaries link against a calculable glibc
+  # rather than the runner's much newer one. The container boundary ends after
+  # the compile; packaging, signing and SBOM generation run on the runner.
+  BUILD_IMAGE: rust@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922
 
 jobs:
-  meta:
-    name: Release metadata
-    runs-on: ubuntu-latest
+  # ---------------------------------------------------------------- stage 1
+  metadata:
+    name: Identity
+    runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      tag: ${{ steps.id.outputs.tag }}
+      version: ${{ steps.id.outputs.version }}
+      is_prerelease: ${{ steps.id.outputs.is_prerelease }}
+      source_date_epoch: ${{ steps.id.outputs.source_date_epoch }}
     steps:
-      - name: Parse version
-        id: meta
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Establish the release identity
+        id: id
+        # The dispatch input never reaches the script body by interpolation.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [[ -n "${{ inputs.tag }}" ]]; then
-            TAG=${{ inputs.tag }}
-          else
-            TAG=${GITHUB_REF#refs/tags/}
-          fi
-          VERSION=${TAG#v}
-          if [[ "$VERSION" =~ (alpha|beta|rc|-) ]]; then
-            IS_PRERELEASE=true
-          else
-            IS_PRERELEASE=false
-          fi
-          { echo "tag=${TAG}"; echo "version=${VERSION}"; echo "is_prerelease=${IS_PRERELEASE}"; } >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          tag="$INPUT_TAG"
 
+          # Canonical SemVer with a leading v, optional prerelease suffix.
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag is not canonical SemVer: $tag"; exit 1
+          fi
+
+          # The release core is what the manifests carry; a prerelease suffix
+          # is by definition not in them, and Arch's pkgver may not hold a
+          # hyphen either.
+          version="${tag#v}"
+          version="${version%%-*}"
+
+          # The tag must point at the commit this run is built from.
+          got=$(git rev-parse "refs/tags/${tag}^{}")
+          if [ "$got" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $tag points at $got, the run is on $GITHUB_SHA"; exit 1
+          fi
+
+          manifest=$(python3 -c "import tomllib;print(tomllib.load(open('Cargo.toml','rb'))['package']['version'])")
+          if [ "$manifest" != "$version" ]; then
+            echo "::error::Cargo.toml says $manifest, the tag core is $version"; exit 1
+          fi
+          for c in crates/libpfs3 crates/pfs3-fuse; do
+            m=$(python3 -c "import tomllib;print(tomllib.load(open('$c/Cargo.toml','rb'))['package']['version'])")
+            if [ "$m" != "$version" ]; then
+              echo "::error::$c says $m, the tag core is $version"; exit 1
+            fi
+          done
+          rp=$(python3 -c "import json;print(json.load(open('.release-please-manifest.json'))['.'])")
+          if [ "$rp" != "$version" ]; then
+            echo "::error::release-please manifest says $rp, the tag core is $version"; exit 1
+          fi
+
+          if [ "$tag" = "v$version" ]; then is_prerelease=false; else is_prerelease=true; fi
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "is_prerelease=$is_prerelease"
+            echo "source_date_epoch=$(git log -1 --format=%ct "$GITHUB_SHA")"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::$tag, core $version, prerelease=$is_prerelease"
+
+  # ---------------------------------------------------------------- stage 2
   build-cli:
     name: CLI ${{ matrix.target }}
-    needs: meta
-    runs-on: ${{ matrix.os }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
+          - { runner: ubuntu-24.04,     target: x86_64-unknown-linux-musl,  os: linux }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, os: linux }
+          - { runner: macos-15-intel,   target: x86_64-apple-darwin,        os: macos }
+          - { runner: macos-15,         target: aarch64-apple-darwin,       os: macos }
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cross tools (aarch64 musl)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
+          ref: ${{ needs.metadata.outputs.tag }}
+      - run: rustup show
+      - run: rustup target add ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.os == 'linux'
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
-          mkdir -p .cargo
-          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
-      - name: Install musl tools (x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install -y musl-tools
-      - run: cargo build --release --target ${{ matrix.target }} -p pfs3
-      - name: Create archive
+          sudo apt-get install -y musl-tools
+      - run: cargo build --locked --release --target ${{ matrix.target }} -p pfs3
+      - name: Check the linkage
+        env:
+          TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
         run: |
-          VERSION=${{ needs.meta.outputs.version }}
-          cp target/${{ matrix.target }}/release/pfs3 .
-          chmod +x pfs3
-          tar czf "pfs3-${VERSION}-${{ matrix.target }}.tar.gz" pfs3 README.md LICENSE
-      - uses: actions/upload-artifact@v5
+          set -euo pipefail
+          bin="target/$TARGET/release/pfs3"
+          if [ "$OS" = "linux" ]; then
+            # musl: the binary has to be static. A dynamic one would depend on
+            # the runner's glibc without saying so.
+            if file "$bin" | grep -q "dynamically linked"; then
+              echo "::error::$bin is dynamically linked, expected a static musl build"; exit 1
+            fi
+          else
+            # A path from a build machine in the artefact means a machine
+            # dependency was linked in.
+            if otool -L "$bin" | tail -n +2 | grep -Eq '/opt/homebrew|/usr/local|/Users|/Volumes'; then
+              echo "::error::build machine paths in the linkage:"; otool -L "$bin"; exit 1
+            fi
+          fi
+      - name: Smoke test in a clean environment
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          out=$(env -i "target/$TARGET/release/pfs3" --version)
+          echo "$out"
+          printf '%s' "$out" | grep -Fq "${{ needs.metadata.outputs.version }}"
+      # macOS ships bsdtar, which knows none of --sort, --owner, --group or
+      # --numeric-owner. A normalised archive therefore needs GNU tar on both
+      # platforms; without it the step passes on Linux and fails on macOS.
+      - name: Resolve a GNU tar
+        id: tar
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install gnu-tar >/dev/null
+            bin="$(brew --prefix gnu-tar)/libexec/gnubin/tar"
+            [ -x "$bin" ] || bin="$(command -v gtar)"
+          else
+            bin=tar
+          fi
+          test -n "$bin"
+          # Captured rather than piped into head: an early-exiting consumer
+          # can kill the producer and pipefail then fails the step.
+          ver=$("$bin" --version)
+          printf '%s\n' "$ver" | head -1
+          case "$ver" in *"GNU tar"*) ;; *) echo "::error::not GNU tar: $bin"; exit 1 ;; esac
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Create the archive
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_DATE_EPOCH: ${{ needs.metadata.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          mkdir -p out stage
+          cp "target/$TARGET/release/pfs3" README.md LICENSE stage/
+          chmod 755 stage/pfs3
+          "${{ steps.tar.outputs.bin }}" --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@${SOURCE_DATE_EPOCH}" \
+              -czf "out/pfs3-${VERSION}-${TARGET}.tar.gz" -C stage .
+          tar tzf "out/pfs3-${VERSION}-${TARGET}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-${{ matrix.target }}
-          path: "*.tar.gz"
+          name: payload-cli-${{ matrix.target }}
+          path: out/*.tar.gz
+          if-no-files-found: error
 
   build-fuse:
     name: FUSE ${{ matrix.target }}
-    needs: meta
-    runs-on: ${{ matrix.os }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
+          - { runner: ubuntu-24.04,     target: x86_64-unknown-linux-gnu,  os: linux }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, os: linux }
+          - { runner: macos-15-intel,   target: x86_64-apple-darwin,       os: macos }
+          - { runner: macos-15,         target: aarch64-apple-darwin,      os: macos }
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Install libfuse3 (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
-      - name: Install macFUSE (macOS)
-        if: runner.os == 'macOS'
-        run: brew install macfuse
-      - run: cargo build --release --target ${{ matrix.target }} -p pfs3-fuse
-      - name: Create archive
+          ref: ${{ needs.metadata.outputs.tag }}
+      # Linux: compile inside the pinned image, so the binary links against
+      # Debian 12's glibc rather than the runner's. The container does nothing
+      # but compile.
+      - name: Build in the pinned image (Linux)
+        if: matrix.os == 'linux'
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION=${{ needs.meta.outputs.version }}
-          cp target/${{ matrix.target }}/release/pfs3-fuse .
-          chmod +x pfs3-fuse
-          tar czf "pfs3-fuse-${VERSION}-${{ matrix.target }}.tar.gz" pfs3-fuse README.md LICENSE
-      - uses: actions/upload-artifact@v5
+          set -euo pipefail
+          docker run --rm -v "$PWD":/src -w /src -e CARGO_TERM_COLOR=always "$BUILD_IMAGE" \
+            bash -c 'set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq libfuse3-dev pkg-config
+              rustup show
+              cargo build --locked --release -p pfs3-fuse'
+      - name: Build natively (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          set -euo pipefail
+          rustup show
+          brew install macfuse
+          cargo build --locked --release -p pfs3-fuse
+      - name: Check the linkage
+        env:
+          OS: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          bin="target/release/pfs3-fuse"
+          if [ "$OS" = "linux" ]; then
+            # The FUSE driver links libfuse3 on purpose, which is what the
+            # .deb dependency declares. What must not appear is a glibc newer
+            # than the pinned image's.
+            docker run --rm -v "$PWD":/src -w /src "$BUILD_IMAGE" \
+              bash -c 'ldd target/release/pfs3-fuse'
+          else
+            otool -L "$bin"
+          fi
+      # macOS ships bsdtar, which knows none of --sort, --owner, --group or
+      # --numeric-owner. A normalised archive therefore needs GNU tar on both
+      # platforms; without it the step passes on Linux and fails on macOS.
+      - name: Resolve a GNU tar
+        id: tar
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install gnu-tar >/dev/null
+            bin="$(brew --prefix gnu-tar)/libexec/gnubin/tar"
+            [ -x "$bin" ] || bin="$(command -v gtar)"
+          else
+            bin=tar
+          fi
+          test -n "$bin"
+          # Captured rather than piped into head: an early-exiting consumer
+          # can kill the producer and pipefail then fails the step.
+          ver=$("$bin" --version)
+          printf '%s\n' "$ver" | head -1
+          case "$ver" in *"GNU tar"*) ;; *) echo "::error::not GNU tar: $bin"; exit 1 ;; esac
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Create the archive
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_DATE_EPOCH: ${{ needs.metadata.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          mkdir -p out stage
+          cp target/release/pfs3-fuse README.md LICENSE stage/
+          chmod 755 stage/pfs3-fuse
+          "${{ steps.tar.outputs.bin }}" --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@${SOURCE_DATE_EPOCH}" \
+              -czf "out/pfs3-fuse-${VERSION}-${TARGET}.tar.gz" -C stage .
+          tar tzf "out/pfs3-fuse-${VERSION}-${TARGET}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuse-${{ matrix.target }}
-          path: "*.tar.gz"
+          name: payload-fuse-${{ matrix.target }}
+          path: out/*.tar.gz
+          if-no-files-found: error
 
   build-deb:
-    name: Debian ${{ matrix.pkg }}
-    needs: meta
-    runs-on: ubuntu-latest
+    name: Debian ${{ matrix.arch }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - pkg: pfs3
-          - pkg: pfs3-fuse
+          - { runner: ubuntu-24.04,     arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse3-dev
-          cargo install cargo-deb
-      - run: cargo build --release -p ${{ matrix.pkg }}
-      - run: cargo deb -p ${{ matrix.pkg }} --no-build
-      - name: Copy .deb
-        run: cp target/debian/*.deb .
-      - uses: actions/upload-artifact@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: deb-${{ matrix.pkg }}
-          path: "*.deb"
+          ref: ${{ needs.metadata.outputs.tag }}
+      # Compile in the pinned image for the same glibc reason as above, then
+      # package on the runner: cargo deb --no-build compiles nothing.
+      - name: Compile in the pinned image
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD":/src -w /src -e CARGO_TERM_COLOR=always "$BUILD_IMAGE" \
+            bash -c 'set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq libfuse3-dev pkg-config
+              rustup show
+              cargo build --locked --release -p pfs3 -p pfs3-fuse'
+      - run: sudo chown -R "$USER" target
+      - uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+        with:
+          tool: cargo-deb
+      - name: Package
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for pkg in pfs3 pfs3-fuse; do
+            cargo deb -p "$pkg" --no-build --deb-revision 1
+          done
+          cp target/debian/*.deb out/
+          # The archive contract reads package, version and architecture out of
+          # the file name alone, so it is asserted rather than assumed.
+          for pkg in pfs3 pfs3-fuse; do
+            want="out/${pkg}_${VERSION}-1_${ARCH}.deb"
+            test -f "$want" || { echo "::error::expected $want, got:"; ls -1 out; exit 1; }
+          done
+          test "$(find out -maxdepth 1 -name '*.deb' | wc -l)" -eq 2
+          ls -l out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: payload-deb-${{ matrix.arch }}
+          path: out/*.deb
+          if-no-files-found: error
 
-  upload-assets:
-    name: Upload release assets
-    needs: [meta, build-cli, build-fuse, build-deb]
-    runs-on: ubuntu-latest
+  # ------------------------------------------------------------ stages 3+4
+  sign:
+    name: Sign, attest, SBOM
+    needs: [metadata, build-cli, build-fuse, build-deb]
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: artifacts
-      - name: Collect assets
-        run: |
-          mkdir release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.deb" \) -exec cp {} release-assets/ \;
-          cd release-assets && sha256sum * > SHA256SUMS
-      - name: Upload to GitHub Release
+          pattern: payload-*
+          merge-multiple: true
+          path: payloads
+      - name: Enforce the payload inventory
         env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          gh release upload "${{ needs.meta.outputs.tag }}" release-assets/* \
-            --repo ${{ github.repository }} --clobber
+          set -euo pipefail
+          # The expected list is derived here once and every later count comes
+          # from it, so file names are not maintained twice.
+          {
+            for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+                     x86_64-apple-darwin aarch64-apple-darwin; do
+              echo "pfs3-${VERSION}-${t}.tar.gz"
+            done
+            for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                     x86_64-apple-darwin aarch64-apple-darwin; do
+              echo "pfs3-fuse-${VERSION}-${t}.tar.gz"
+            done
+            for a in amd64 arm64; do
+              echo "pfs3_${VERSION}-1_${a}.deb"
+              echo "pfs3-fuse_${VERSION}-1_${a}.deb"
+            done
+          } | sort > expected.txt
+          find payloads -maxdepth 1 -type f -printf '%f\n' | sort > actual.txt
+          if ! diff -u expected.txt actual.txt; then
+            echo "::error::the payload set does not match the expected inventory"; exit 1
+          fi
+          echo "::notice::$(wc -l < expected.txt) payloads"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # Install syft only. The action's main entry point would generate and
+      # attach an SBOM of its own, which would land outside the derived
+      # inventory below.
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Sign every payload and give it an SBOM
+        run: |
+          set -euo pipefail
+          cd payloads
+          for f in *; do
+            # The SBOM keeps the payload's full name, extension included.
+            syft scan "file:$f" -o spdx-json > "${f}.spdx.json"
+            # Only the payload gets a bundle of its own; the SBOM is covered by
+            # SHA256SUMS and attested along with it.
+            cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f" >/dev/null
+          done
+          ls -1
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'payloads/*.tar.gz,payloads/*.deb'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-payloads
+          path: payloads/*
+          if-no-files-found: error
 
-  update-homebrew:
-    name: Homebrew tap
-    needs: [meta, build-cli, upload-assets]
-    runs-on: ubuntu-latest
-    if: needs.meta.outputs.is_prerelease == 'false'
+  # ---------------------------------------------------------------- stage 5
+  channel-metadata:
+    name: Channel metadata
+    needs: [metadata, sign]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: artifacts
-      - name: Calculate checksums
-        id: sums
-        run: |
-          VERSION=${{ needs.meta.outputs.version }}
-          X64_SHA=$(sha256sum artifacts/cli-x86_64-apple-darwin/*.tar.gz | cut -d' ' -f1)
-          ARM64_SHA=$(sha256sum artifacts/cli-aarch64-apple-darwin/*.tar.gz | cut -d' ' -f1)
-          { echo "x64_sha=${X64_SHA}"; echo "arm64_sha=${ARM64_SHA}"; } >> "$GITHUB_OUTPUT"
-      - name: Update tap
+          ref: ${{ needs.metadata.outputs.tag }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-payloads
+          path: payloads
+      - name: Generate the formula and the PKGBUILDs
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          VERSION=${{ needs.meta.outputs.version }}
-          X64_SHA=${{ steps.sums.outputs.x64_sha }}
-          ARM64_SHA=${{ steps.sums.outputs.arm64_sha }}
+          set -euo pipefail
+          mkdir -p meta
+          base="https://github.com/${REPO}/releases/download/${TAG}"
+          sum() { sha256sum "payloads/$1" | cut -d' ' -f1; }
 
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/metaneutrons/homebrew-tap.git"
-          cd homebrew-tap
-          mkdir -p Formula
-
-          cat > Formula/pfs3.rb << EOF
+          cat > meta/pfs3.rb <<EOF
           class Pfs3 < Formula
             desc "PFS3 (Amiga Professional File System III) tools"
-            homepage "https://github.com/metaneutrons/pfs3"
+            homepage "https://github.com/${REPO}"
             version "${VERSION}"
             license "LGPL-3.0-or-later"
 
             on_macos do
               if Hardware::CPU.intel?
-                url "https://github.com/metaneutrons/pfs3/releases/download/v${VERSION}/pfs3-${VERSION}-x86_64-apple-darwin.tar.gz"
-                sha256 "${X64_SHA}"
+                url "${base}/pfs3-${VERSION}-x86_64-apple-darwin.tar.gz"
+                sha256 "$(sum "pfs3-${VERSION}-x86_64-apple-darwin.tar.gz")"
               else
-                url "https://github.com/metaneutrons/pfs3/releases/download/v${VERSION}/pfs3-${VERSION}-aarch64-apple-darwin.tar.gz"
-                sha256 "${ARM64_SHA}"
+                url "${base}/pfs3-${VERSION}-aarch64-apple-darwin.tar.gz"
+                sha256 "$(sum "pfs3-${VERSION}-aarch64-apple-darwin.tar.gz")"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "${base}/pfs3-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+                sha256 "$(sum "pfs3-${VERSION}-x86_64-unknown-linux-musl.tar.gz")"
+              else
+                url "${base}/pfs3-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
+                sha256 "$(sum "pfs3-${VERSION}-aarch64-unknown-linux-musl.tar.gz")"
               end
             end
 
@@ -225,48 +464,555 @@ jobs:
             end
           end
           EOF
+          ruby -c meta/pfs3.rb
+          # Exactly four download URLs, all of the CURRENT tag.
+          test "$(grep -c "${base}/" meta/pfs3.rb)" -eq 4
+          test "$(grep -c 'url "https' meta/pfs3.rb)" -eq 4
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/pfs3.rb
-          git commit -m "Update pfs3 to ${VERSION}"
-          git push
+          # The source archive GitHub serves unpacks into a directory derived
+          # from the FULL tag, while pkgver carries the release core. Neither
+          # may be assumed: the generator measures the top level of the actual
+          # tar listing and writes it into the PKGBUILD as _srcdir.
+          curl -sSfL -o src.tar.gz "https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+          # Materialise the listing once. Piping tar into `grep -q` would make
+          # grep close the pipe on its first match, tar die of a write error
+          # and pipefail fail the whole step.
+          tar tzf src.tar.gz > listing.txt
+          srcdir=$(cut -d/ -f1 listing.txt | sort -u)
+          test "$(printf '%s\n' "$srcdir" | wc -l)" -eq 1
+          srcsum=$(sha256sum src.tar.gz | cut -d' ' -f1)
+          echo "::notice::source archive root: $srcdir"
+          # The measured root must actually hold the workspace manifest.
+          grep -Fxq "${srcdir}/Cargo.toml" listing.txt
 
-  publish-crates:
-    name: crates.io
-    needs: [meta, upload-assets]
-    runs-on: ubuntu-latest
-    if: needs.meta.outputs.is_prerelease == 'false'
+          for pkg in pfs3 pfs3-fuse; do
+            if [ "$pkg" = pfs3 ]; then
+              desc="PFS3 (Amiga Professional File System III) tools"
+              deps="depends=()"
+            else
+              desc="FUSE driver for PFS3 (Amiga) disk images"
+              deps="depends=('fuse3')"
+            fi
+            out="meta/PKGBUILD.${pkg}"
+            cat > "$out" <<EOF
+          # Maintainer: metaneutrons <aur@metaneutrons.github.io>
+          pkgname=${pkg}
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="${desc}"
+          arch=('x86_64' 'aarch64')
+          url="https://github.com/${REPO}"
+          license=('LGPL-3.0-or-later')
+          ${deps}
+          makedepends=('cargo' 'pkgconf')
+          # Measured from the real tar listing rather than assumed from the tag
+          # or from \$pkgver. A prerelease tag makes the two differ: the archive
+          # root carries the full tag while pkgver carries the release core.
+          _srcdir='${srcdir}'
+          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz")
+          sha256sums=('${srcsum}')
+
+          prepare() {
+            cd "\$_srcdir"
+            export RUSTUP_TOOLCHAIN=stable
+            cargo fetch --locked --target "\$(rustc -vV | sed -n 's/host: //p')"
+          }
+
+          build() {
+            cd "\$_srcdir"
+            export RUSTUP_TOOLCHAIN=stable
+            export CARGO_TARGET_DIR=target
+            cargo build --frozen --release -p ${pkg}
+          }
+
+          package() {
+            cd "\$_srcdir"
+            install -Dm755 "target/release/${pkg}" "\$pkgdir/usr/bin/${pkg}"
+          EOF
+            if [ "$pkg" = pfs3 ]; then
+              cat >> "$out" <<'EOF'
+            install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+          EOF
+            fi
+            cat >> "$out" <<'EOF'
+            install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+          }
+          EOF
+            # A PKGBUILD uses ${pkgname} and ${pkgver} legitimately, so a blanket
+            # search for an unexpanded ${ cannot tell a template leftover from
+            # normal makepkg syntax. Assert the substituted values instead.
+            grep -Fq "pkgname=${pkg}" "$out"
+            grep -Fq "pkgver=${VERSION}" "$out"
+            grep -Fq "_srcdir='${srcdir}'" "$out"
+            grep -Fq "sha256sums=('${srcsum}')" "$out"
+            grep -Fq "refs/tags/${TAG}.tar.gz" "$out"
+            bash -n "$out"
+          done
+          ls -1 meta
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the channel metadata
+        run: |
+          set -euo pipefail
+          cd meta
+          for f in *; do cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f" >/dev/null; done
+          ls -1
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'meta/pfs3.rb,meta/PKGBUILD.*'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: channel-metadata
+          path: meta/*
+          if-no-files-found: error
+
+  candidate:
+    name: Final candidate
+    needs: [metadata, sign, channel-metadata]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish -p libpfs3 --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-payloads
+          path: candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: channel-metadata
+          path: candidate
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Assemble and verify the release inventory
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          # Payload list, derived once; every count below comes from it.
+          {
+            for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+                     x86_64-apple-darwin aarch64-apple-darwin; do
+              echo "pfs3-${VERSION}-${t}.tar.gz"; done
+            for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                     x86_64-apple-darwin aarch64-apple-darwin; do
+              echo "pfs3-fuse-${VERSION}-${t}.tar.gz"; done
+            for a in amd64 arm64; do
+              echo "pfs3_${VERSION}-1_${a}.deb"; echo "pfs3-fuse_${VERSION}-1_${a}.deb"; done
+          } | sort > /tmp/payloads.txt
+          printf '%s\n' pfs3.rb PKGBUILD.pfs3 PKGBUILD.pfs3-fuse | sort > /tmp/meta.txt
+
+          # per payload: payload + SBOM + bundle; per metadata file: file + bundle
+          {
+            while read -r p; do printf '%s\n%s\n%s\n' "$p" "$p.spdx.json" "$p.sigstore.json"; done < /tmp/payloads.txt
+            while read -r m; do printf '%s\n%s\n' "$m" "$m.sigstore.json"; done < /tmp/meta.txt
+          } | sort > /tmp/expected.txt
+          find . -maxdepth 1 -type f -printf '%f\n' | sort > /tmp/actual.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
+
+          # Verify every signature against the bytes actually present.
+          while read -r f; do
+            cosign verify-blob --bundle "${f}.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${REPO}/\\.github/workflows/release\\.yml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$f" >/dev/null
+          done < <(cat /tmp/payloads.txt /tmp/meta.txt)
+          echo "::notice::$(wc -l < /tmp/expected.txt) candidate files, all signatures verified"
+
+          # SHA256SUMS covers every file named above and nothing else.
+          xargs -d '\n' -a /tmp/expected.txt sha256sum > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq "$(wc -l < /tmp/expected.txt)"
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate
+          path: candidate/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- stage 6
+  preflight:
+    name: Channel preflight
+    needs: [metadata, candidate]
+    if: ${{ needs.metadata.outputs.is_prerelease == 'false' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Homebrew, the App reaches only the tap
+        env:
+          TAP: ${{ vars.HOMEBREW_TAP_REPO }}
+        run: |
+          set -euo pipefail
+          test -n "${{ vars.HOMEBREW_APP_CLIENT_ID }}" || { echo "::error::PF01 HOMEBREW_APP_CLIENT_ID missing"; exit 1; }
+          test -n "$TAP" || { echo "::error::PF02 HOMEBREW_TAP_REPO missing"; exit 1; }
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: tap-token
+        with:
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+          client-id: ${{ vars.HOMEBREW_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: The token reaches exactly one repository, and the tap is guarded
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP: ${{ vars.HOMEBREW_TAP_REPO }}
+        run: |
+          set -euo pipefail
+          n=$(gh api /installation/repositories --jq '.total_count')
+          test "$n" -eq 1 || { echo "::error::PF03 the token reaches $n repositories, expected 1"; exit 1; }
+          gh api /installation/repositories --jq '.repositories[].full_name' | grep -Fxq "$TAP" \
+            || { echo "::error::PF04 the token does not reach $TAP"; exit 1; }
+          # branches/BRANCH answers for a ruleset AND for classic protection.
+          # rules/branches/BRANCH sees rulesets only and returns an empty list
+          # on a classically protected branch.
+          guarded=$(gh api "repos/${TAP}/branches/main" --jq '.protected')
+          test "$guarded" = "true" || { echo "::error::PF05 $TAP main is unguarded"; exit 1; }
+      - name: AUR, the key is accepted against the pinned host keys
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_HOSTS: ${{ vars.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$AUR_KEY" || { echo "::error::PF06 AUR_SSH_PRIVATE_KEY missing"; exit 1; }
+          test -n "$AUR_HOSTS" || { echo "::error::PF07 AUR_SSH_KNOWN_HOSTS missing"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_KEY" > ~/.ssh/aur; chmod 600 ~/.ssh/aur
+          printf '%s\n' "$AUR_HOSTS" > ~/.ssh/aur_known_hosts; chmod 600 ~/.ssh/aur_known_hosts
+          # The AUR answers with a banner on stderr and exit code 1 even on
+          # success, so the banner is the signal, not the exit code. Without a
+          # command argument, otherwise it returns the command list and no
+          # banner and a valid key looks rejected.
+          out=$(ssh -F /dev/null -o IdentitiesOnly=yes -o BatchMode=yes \
+                    -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/aur_known_hosts \
+                    -i ~/.ssh/aur aur@aur.archlinux.org 2>&1 || true)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -Eq '^Welcome to AUR, .+!' \
+            || { echo "::error::PF08 the AUR did not accept the key"; exit 1; }
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: cratesio
+        # Issues a short-lived OIDC token and discards it. That changes nothing
+        # and checks exactly the capability the publish will need. It fails
+        # until the trusted publisher for libpfs3 exists, which is deliberate:
+        # this project has shipped to crates.io since 0.1.0, so a missing
+        # credential here is a mistake and not a choice.
+      - name: crates.io reachable through trusted publishing
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.cratesio.outputs.token }}" \
+            || { echo "::error::PF09 trusted publishing issued no token"; exit 1; }
+          echo "::notice::crates.io trusted publishing answered"
+
+  # ---------------------------------------------------------------- stage 7
+  stage:
+    name: Staged prerelease
+    needs: [metadata, candidate, preflight]
+    if: >-
+      !cancelled()
+      && needs.metadata.result == 'success'
+      && needs.candidate.result == 'success'
+      && (
+        (needs.metadata.outputs.is_prerelease == 'true' && needs.preflight.result == 'skipped')
+        || (needs.metadata.outputs.is_prerelease == 'false' && needs.preflight.result == 'success')
+      )
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate
+          path: candidate
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Attach the candidate to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          state=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null || echo absent)
+          case "$state" in
+            absent) gh release create "$TAG" --repo "$REPO" --draft --verify-tag --title "$TAG" --notes "Pipeline test tag." ;;
+            true)   : ;;
+            false)  echo "::error::release $TAG is already published"; exit 1 ;;
+          esac
+          gh release upload "$TAG" --repo "$REPO" candidate/*
+      - name: Verify what the draft actually serves
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir back && cd back
+          gh release download "$TAG" --repo "$REPO" --pattern '*'
+          # The set the draft serves must equal the candidate exactly.
+          find ../candidate -maxdepth 1 -type f -printf '%f\n' | sort > /tmp/want.txt
+          find . -maxdepth 1 -type f -printf '%f\n' | sort > /tmp/got.txt
+          diff -u /tmp/want.txt /tmp/got.txt
+          # Byte for byte against the candidate, then the checksums the file
+          # itself declares.
+          while read -r f; do cmp "$f" "../candidate/$f"; done < /tmp/want.txt
+          sha256sum -c SHA256SUMS
+          # And the signatures against the downloaded bytes, not the built ones.
+          # The signed set is derived from the bundles that are actually there,
+          # not from an exclusion list: SBOMs deliberately carry no bundle of
+          # their own, and a hand-maintained filter got that wrong.
+          find . -maxdepth 1 -name '*.sigstore.json' -printf '%f\n' \
+            | sed 's/\.sigstore\.json$//' | sort > /tmp/signed.txt
+          # 12 payloads plus 3 channel metadata files.
+          test "$(wc -l < /tmp/signed.txt)" -eq 15
+          while read -r f; do
+            test -f "$f"
+            cosign verify-blob --bundle "${f}.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${REPO}/\\.github/workflows/release\\.yml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$f" >/dev/null
+          done < /tmp/signed.txt
+          echo "::notice::the draft serves the candidate byte for byte"
+      - name: Publish as a prerelease, never as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
+          gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease --jq '"draft=\(.isDraft) prerelease=\(.isPrerelease)"'
+
+  # ---------------------------------------------------------------- stage 8
+  publish-homebrew:
+    name: Homebrew tap
+    needs: [metadata, stage]
+    if: ${{ needs.metadata.outputs.is_prerelease == 'false' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: channel-metadata
+          path: meta
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: tap-token
+        with:
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+          client-id: ${{ vars.HOMEBREW_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the formula pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP: ${{ vars.HOMEBREW_TAP_REPO }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          bot=$(gh api "/users/${{ steps.tap-token.outputs.app-slug }}[bot]" --jq '"\(.id) \(.login)"')
+          bot_id=${bot%% *}; bot_login=${bot##* }
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP}.git" tap
+          cd tap
+          cp ../meta/pfs3.rb Formula/pfs3.rb
+          # The tap requires a regenerated README with every formula change.
+          if [ -x scripts/generate-readme.sh ]; then scripts/generate-readme.sh; fi
+          if git diff --quiet; then
+            echo "::notice::the tap already carries this formula"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          branch="pfs3-${VERSION}"
+          git switch -c "$branch"
+          git config user.name "$bot_login"
+          git config user.email "${bot_id}+${bot_login}@users.noreply.github.com"
+          git commit -qam "pfs3 ${VERSION}"
+          # --head is explicit: deriving it from a shallow clone fails right
+          # after a successful push.
+          git push -q origin "$branch"
+          n=$(gh pr create --repo "$TAP" --head "$branch" --base main \
+                --title "pfs3 ${VERSION}" --body "Automated formula update from ${{ github.repository }}@${{ needs.metadata.outputs.tag }}." \
+                | grep -oE '[0-9]+$')
+          { echo "skipped=false"; echo "number=$n"; echo "branch=$branch"; } >> "$GITHUB_OUTPUT"
+      - name: Wait for the tap checks, then merge
+        if: steps.pr.outputs.skipped == 'false'
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP: ${{ vars.HOMEBREW_TAP_REPO }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          # gh pr checks fails with "no checks reported" on a pull request that
+          # is seconds old, and --watch does not wait that out. Count the LINES
+          # it prints: its exit code is non-zero for a failing check too, and
+          # going by that confuses "failing" with "not there yet".
+          for _ in $(seq 1 40); do
+            if [ "$(gh pr checks "$PR" --repo "$TAP" 2>/dev/null | wc -l)" -gt 0 ]; then ready=1; break; fi
+            sleep 15
+          done
+          test "${ready:-0}" = 1 || { echo "::error::the tap reported no check within ten minutes"; exit 1; }
+          gh pr checks "$PR" --repo "$TAP" --watch --fail-fast
+          gh pr merge "$PR" --repo "$TAP" --squash --delete-branch
+      - name: Read the formula back byte for byte
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP: ${{ vars.HOMEBREW_TAP_REPO }}
+        run: |
+          set -euo pipefail
+          # cmp on two files. Routing the published content through $(...)
+          # strips its trailing newline while the file on disk keeps one, so
+          # such a comparison fails by exactly one byte on every run.
+          gh api "repos/${TAP}/contents/Formula/pfs3.rb?ref=main" \
+            --jq '.content' | base64 -d > published.rb
+          cmp published.rb meta/pfs3.rb
+          echo "::notice::the tap serves the qualified formula"
 
   publish-aur:
     name: AUR ${{ matrix.pkg }}
-    needs: [meta, upload-assets]
-    runs-on: ubuntu-latest
-    if: needs.meta.outputs.is_prerelease == 'false'
+    needs: [metadata, stage]
+    if: ${{ needs.metadata.outputs.is_prerelease == 'false' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
     strategy:
+      fail-fast: false
+      max-parallel: 1
       matrix:
-        include:
-          - pkg: pfs3
-            pkgbuild: aur/PKGBUILD
-          - pkg: pfs3-fuse
-            pkgbuild: aur/pfs3-fuse/PKGBUILD
+        pkg: [pfs3, pfs3-fuse]
     steps:
-      - uses: actions/checkout@v5
-      - name: Update PKGBUILD version
-        run: |
-          VERSION=${{ needs.meta.outputs.version }}
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" ${{ matrix.pkgbuild }}
-          sed -i "s/^pkgrel=.*/pkgrel=1/" ${{ matrix.pkgbuild }}
-      - uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pkgname: ${{ matrix.pkg }}
-          pkgbuild: ${{ matrix.pkgbuild }}
-          commit_username: metaneutrons
-          commit_email: aur@metaneutrons.github.io
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ needs.meta.outputs.version }}"
-          ssh_keyscan_types: rsa,ecdsa,ed25519
+          name: channel-metadata
+          path: meta
+      - name: Prepare the SSH access
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_HOSTS: ${{ vars.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_KEY" > ~/.ssh/aur; chmod 600 ~/.ssh/aur
+          printf '%s\n' "$AUR_HOSTS" > ~/.ssh/known_hosts; chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+      - name: Build and check the package, then generate .SRCINFO
+        env:
+          PKG: ${{ matrix.pkg }}
+        run: |
+          set -euo pipefail
+          mkdir -p work && cp "meta/PKGBUILD.${PKG}" work/PKGBUILD
+          docker run --rm -v "$PWD/work":/work -w /work \
+            archlinux/archlinux:base-devel@sha256:002a85f88d7311d9c9207ae0178de1e62f2b8936703b107eedf03a09eabc2153 \
+            bash -c 'set -euo pipefail
+              pacman -Sy --noconfirm --needed rust pkgconf fuse3 >/dev/null
+              useradd -m build && chown -R build /work
+              su build -c "makepkg --printsrcinfo > .SRCINFO"
+              su build -c "makepkg -f --noconfirm"
+              find . -maxdepth 1 -name "*.pkg.tar.*" -print'
+          # The container writes as its own user; take the files back.
+          sudo chown -R "$USER" work
+          test -s work/.SRCINFO
+          grep -Fq "pkgver = ${{ needs.metadata.outputs.version }}" work/.SRCINFO
+      - name: Push into the AUR
+        env:
+          PKG: ${{ matrix.pkg }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          git clone "ssh://aur@aur.archlinux.org/${PKG}.git" aur
+          cp work/PKGBUILD work/.SRCINFO aur/
+          cd aur
+          if git diff --quiet; then
+            echo "::notice::the AUR already carries this version"; exit 0
+          fi
+          git config user.name metaneutrons
+          git config user.email aur@metaneutrons.github.io
+          git commit -qam "Update to ${VERSION}"
+          git push origin master
+      - name: Read the AUR back
+        env:
+          PKG: ${{ matrix.pkg }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://aur.archlinux.org/${PKG}.git" verify
+          cmp verify/PKGBUILD work/PKGBUILD
+          cmp verify/.SRCINFO work/.SRCINFO
+          # The RPC index lags behind the git push. Five minutes were measured
+          # to be too short on a package that had published correctly; this is
+          # twenty, and it stays a hard abort rather than a warning.
+          for _ in $(seq 1 40); do
+            got=$(curl -sSf "https://aur.archlinux.org/rpc/v5/info?arg[]=${PKG}" \
+                  | python3 -c 'import sys,json; r=json.load(sys.stdin)["results"]; print(r[0]["Version"] if r else "")')
+            if [ "$got" = "${VERSION}-1" ]; then echo "::notice::the AUR shows ${got}"; exit 0; fi
+            sleep 30
+          done
+          echo "::error::the AUR did not converge on ${VERSION}-1 within twenty minutes"; exit 1
+
+  publish-crates:
+    name: crates.io
+    needs: [metadata, stage, publish-homebrew, publish-aur]
+    if: ${{ needs.metadata.outputs.is_prerelease == 'false' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+      - run: rustup show
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      # cargo determines the order itself and verifies across the whole set.
+      # No hand-written order, no retry loop, no `|| true`: a failed publish is
+      # never retried under the same version, the repair is a patch release.
+      # Last of the channels, because there is no usable dry run for a
+      # workspace and a failure here must not leave the others open.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --workspace --locked
+
+  # ---------------------------------------------------------------- stage 9
+  promote:
+    name: Promote to latest
+    needs: [metadata, stage, publish-homebrew, publish-aur, publish-crates]
+    if: >-
+      !cancelled()
+      && needs.metadata.outputs.is_prerelease == 'false'
+      && needs.stage.result == 'success'
+      && needs.publish-homebrew.result == 'success'
+      && needs.publish-aur.result == 'success'
+      && needs.publish-crates.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Set the unchanged prerelease to latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The assets are not touched here.
+          gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest
+          gh release view "$TAG" --repo "$REPO" --json isPrerelease,isLatest \
+            --jq '"prerelease=\(.isPrerelease) latest=\(.isLatest)"'
+          test "$(gh api "repos/${REPO}/releases/latest" --jq .tag_name)" = "$TAG"

@@ -102,8 +102,11 @@ libc = "0.2"
 [package.metadata.deb]
 section = "utils"
 depends = "libfuse3-3"
+# cargo-deb resolves relative asset sources against the PACKAGE directory,
+# not the workspace root, so the shared files need the way up. The binary
+# path is the exception: cargo-deb rewrites it to the workspace target dir.
 assets = [
   ["target/release/pfs3-fuse", "usr/bin/", "755"],
-  ["README.md", "usr/share/doc/pfs3-fuse/", "644"],
-  ["LICENSE", "usr/share/doc/pfs3-fuse/", "644"],
+  ["../../README.md", "usr/share/doc/pfs3-fuse/", "644"],
+  ["../../LICENSE", "usr/share/doc/pfs3-fuse/", "644"],
 ]
