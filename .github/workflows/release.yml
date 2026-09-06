@@ -538,12 +538,14 @@ jobs:
             install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
           }
           EOF
-            # The generated file must not carry an unexpanded placeholder.
-            # shellcheck disable=SC2016  # a literal ${ is what we look for
-            if grep -Fq '${' "$out"; then
-              echo "::error::unexpanded placeholder in $out"; sed -n '1,60p' "$out"; exit 1
-            fi
+            # A PKGBUILD uses ${pkgname} and ${pkgver} legitimately, so a blanket
+            # search for an unexpanded ${ cannot tell a template leftover from
+            # normal makepkg syntax. Assert the substituted values instead.
+            grep -Fq "pkgname=${pkg}" "$out"
+            grep -Fq "pkgver=${VERSION}" "$out"
             grep -Fq "_srcdir='${srcdir}'" "$out"
+            grep -Fq "sha256sums=('${srcsum}')" "$out"
+            grep -Fq "refs/tags/${TAG}.tar.gz" "$out"
             bash -n "$out"
           done
           ls -1 meta
