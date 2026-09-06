@@ -1,121 +1,235 @@
 name: CI
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
-    branches: [main, develop]
-  schedule:
-    - cron: '0 0 * * 0'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The scheduled security scan lives in scan.yml, NOT here. GitHub disables a
+# scheduled workflow in a public repository after 60 days without a commit and
+# disables the whole FILE with it, push and pull_request included. That is
+# exactly how this repository lost its CI between July and September 2026.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  RUST_BACKTRACE: '1'
 
 jobs:
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
+  quality:
+    name: Format, clippy, licences
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No dtolnay/rust-toolchain: the version lives in rust-toolchain.toml
+      # and rustup installs it from there. Two sources would be a source of
+      # error, and the toolchain file wins over `rustup default` anyway.
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # pfs3-fuse links against libfuse3, so clippy over the whole workspace
+      # needs the headers.
+      - name: Install libfuse3
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev
       - run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the hook configuration
+        env:
+          LEFTHOOK_VERSION: '2.1.12'
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_x86_64.gz" \
+            | gzip -d > "$RUNNER_TEMP/lefthook"
+          chmod +x "$RUNNER_TEMP/lefthook"
+          "$RUNNER_TEMP/lefthook" validate
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
         with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get install -y libfuse3-dev
-      - run: cargo clippy --all-targets -- -D warnings
+          tool: cargo-deny
+      - run: cargo deny check
 
   test:
-    name: Test (${{ matrix.os }}, ${{ matrix.rust }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable, beta]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p libpfs3 --release
-
-  build-cli:
-    name: Build CLI (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
-          mkdir -p .cargo
-          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
-      - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install -y musl-tools
-      - run: cargo build --release --target ${{ matrix.target }} -p pfs3
-
-  build-fuse:
-    name: Build FUSE (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    name: Tests (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
+          - { name: linux-x86_64,  runner: ubuntu-24.04 }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { name: macos-x86_64,  runner: macos-15-intel }
+          - { name: macos-aarch64, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
         with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+          tool: cargo-nextest,cargo-llvm-cov
+      # pfs3-fuse carries no tests of its own; build-fuse compiles it on every
+      # platform instead. Excluding it here keeps the test job off the FUSE
+      # headers on all four runners.
+      - run: cargo nextest run --workspace --exclude pfs3-fuse --all-features --locked
+      # Measured on 6 September 2026: 62.02 % of lines over libpfs3 and pfs3.
+      # The floor sits just below that. The gap is the CLI command modules,
+      # which have no integration tests at all.
+      - name: Coverage with a hard floor
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          cargo llvm-cov --workspace --exclude pfs3-fuse --all-features --locked \
+            --fail-under-lines 60
+
+  # The MSRV declared in crates/libpfs3/Cargo.toml, tested rather than asserted.
+  # The full suite runs here, which is why the bound is 1.94.1 and not the 1.88
+  # the library alone would compile on: sevenz-rust2 needs 1.93, so below 1.94
+  # no test target resolves.
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read the MSRV out of the manifest
+        id: msrv
+        run: |
+          set -euo pipefail
+          v=$(python3 -c "import tomllib;print(tomllib.load(open('crates/libpfs3/Cargo.toml','rb'))['package']['rust-version'])")
+          test -n "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      # RUSTUP_TOOLCHAIN as job env, because rust-toolchain.toml otherwise wins
+      # over `rustup default` and this job would silently test the wrong one.
+      - run: rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: msrv-${{ steps.msrv.outputs.version }}
+      - name: Test at the declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: |
+          set -euo pipefail
+          rustc --version | grep -F "${{ steps.msrv.outputs.version }}"
+          cargo test -p libpfs3 --all-features --locked
+
+  build-fuse:
+    name: FUSE build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64,  runner: ubuntu-24.04 }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { name: macos-x86_64,  runner: macos-15-intel }
+          - { name: macos-aarch64, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install libfuse3 (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev
       - name: Install macFUSE (macOS)
         if: runner.os == 'macOS'
         run: brew install macfuse
-      - run: cargo build --release --target ${{ matrix.target }} -p pfs3-fuse
+      - run: cargo build --locked --release -p pfs3-fuse
 
-  security:
-    name: Security Audit
-    runs-on: ubuntu-latest
+  commit-hygiene:
+    name: Commit hygiene
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      - name: Check title, body and every commit
+        # Title and body reach the script exclusively through env, never by
+        # interpolation into the script text: otherwise the pull request title
+        # would be a shell injection vector.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          status=0
+          cc='^((feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+|Revert ".+")'
+          # grep works line by line, hence .* rather than [^\n]*: in ERE
+          # [^\n] would be the class "neither a backslash nor an n" and would
+          # exclude names containing an 'n'. Anchored at the start of the line,
+          # because by convention a trailer stands on a line of its own;
+          # without the anchor the rule also fires on a body that merely
+          # mentions the forbidden trailer.
+          ban='^[[:space:]]*co-authored-by:.*(claude|anthropic)|^[[:space:]]*generated with.*claude code'
+
+          # On a squash merge the pull request title becomes the subject line
+          # on main and thereby determines the next version.
+          if ! printf '%s' "$PR_TITLE" | grep -Eq "$cc"; then
+            echo "::error::pull request title does not follow Conventional Commits: $PR_TITLE"
+            status=1
+          fi
+
+          # With squash_merge_commit_message=PR_BODY the body lands in the commit.
+          if printf '%s' "$PR_BODY" | grep -Eiq "$ban"; then
+            echo "::error::the pull request body contains an AI attribution trailer."
+            status=1
+          fi
+
+          for sha in $(git rev-list "${BASE_SHA}..${HEAD_SHA}"); do
+            if git log -1 --format=%B "$sha" | grep -Eiq "$ban"; then
+              echo "::error::commit $sha contains an AI attribution trailer."
+              status=1
+            fi
+            email=$(git log -1 --format='%ae%n%ce' "$sha")
+            if printf '%s' "$email" | grep -Fq 'noreply@anthropic.com'; then
+              echo "::error::commit $sha has an Anthropic address as author or committer."
+              status=1
+            fi
+          done
+
+          if [ "$status" -ne 0 ]; then
+            echo "::notice::switch this off for good in ~/.claude/settings.json: {\"attribution\":{\"commit\":\"\",\"pr\":\"\"}}"
+            exit 1
+          fi
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # The pre-push hook scans only the new commits. The full scan over the
+      # history belongs here.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          # Mandatory since the action's breaking change: without a token it
+          # aborts on every pull request, and with a message about the missing
+          # token rather than about a finding.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The only required check in the ruleset. Matrix changes therefore do not
+  # break the repository configuration.
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [quality, test, msrv, build-fuse, secrets, commit-hygiene]
+    runs-on: ubuntu-24.04
+    steps:
+      # "skipped" has to be permitted, otherwise the aggregate job fails on a
+      # push to main, because commit-hygiene only runs on pull_request.
+      - name: Every preceding job must have succeeded or been skipped
+        run: |
+          set -euo pipefail
+          printf '%s\n' '${{ toJSON(needs) }}' |
+            jq -e 'all(.[]; .result == "success" or .result == "skipped")'

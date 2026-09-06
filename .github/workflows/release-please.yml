@@ -1,29 +1,79 @@
+# The only automatic route by which a production tag comes about.
 name: Release Please
 
 on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
+  # actions: write is what the dispatch step needs. Its absence is why the
+  # release-please run of 1 May 2026 failed with HTTP 403 and why v0.1.2
+  # shipped with zero assets and never reached crates.io.
+  actions: write
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
+    runs-on: ubuntu-24.04
+    # The app credentials live exclusively in this environment. Without the
+    # declaration the job sees neither the secret nor the variable.
+    environment: release
     steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
+      # The release pull request MUST be created with an app token. GitHub
+      # suppresses workflow triggers from GITHUB_TOKEN pushes as recursion
+      # protection; CI would then never run on the release pull request and the
+      # required check would stay pending forever. An app token is a real actor.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
         with:
-          release-type: rust
-          manifest-file: .release-please-manifest.json
+          client-id: ${{ vars.RELEASE_PLEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: rp
+        with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
-      - name: Trigger release workflow
-        if: steps.release.outputs.release_created == 'true'
+          manifest-file: .release-please-manifest.json
+
+      # With release-type: rust release-please synchronises Cargo.lock itself.
+      # The step stays because it is idempotent: cargo update then finds nothing
+      # to do and it does not commit.
+      - name: Synchronise Cargo.lock into the release pull request
+        if: ${{ steps.rp.outputs.pr }}
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run release.yml -f tag=${{ steps.release.outputs.tag_name }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+        run: |
+          set -euo pipefail
+          branch=$(printf '%s' "$PR_JSON" | jq -r .headBranchName)
+          git clone --branch "$branch" --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" rp-lock
+          cd rp-lock
+          rustup show
+          cargo update --workspace -q
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already matches the release version."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sync Cargo.lock to the release version" -- Cargo.lock
+            git push origin "HEAD:$branch"
+          fi
+
+      # release.yml deliberately has NO tag trigger. This is the only automatic
+      # starting point; with both, every tag started two pipelines.
+      - name: Start the release build for the new draft
+        if: ${{ steps.rp.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          test -n "$TAG"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

@@ -1,0 +1,46 @@
+# lefthook. Install with:
+#   brew install lefthook gitleaks   (or: mise use -g lefthook gitleaks)
+#   lefthook install
+# The scripts under scripts/hooks/ are manager-independent.
+#
+# Hooks are fast feedback, not enforcement: `--no-verify` bypasses all of this.
+# Every check here has a counterpart in the CI job `commit-hygiene`, `quality`
+# or `secrets`, which the ruleset makes unbypassable.
+#
+# Runtimes measured on 6 September 2026, warm cache, Apple Silicon:
+#   fmt 0.09 s, gitleaks staged 0.06 s, clippy 2.8 s, nextest 27.6 s.
+
+commit-msg:
+  commands:
+    conventional-commits:
+      # {1} is the path to the commit message.
+      run: sh scripts/hooks/check-commit-message.sh {1}
+
+pre-commit:
+  parallel: true
+  commands:
+    staged-guards:
+      run: sh scripts/hooks/check-staged.sh
+    secrets:
+      run: gitleaks git --pre-commit --redact --staged --verbose
+    # Formatting only: clippy compiles and blows the pre-commit budget.
+    format:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+
+pre-push:
+  parallel: false
+  commands:
+    secrets:
+      run: sh scripts/hooks/check-push-secrets.sh
+    # Measured at 2.8 s warm, well inside the 30 s budget. pfs3-fuse is left
+    # out because it needs libfuse3 or macFUSE locally and a contributor
+    # without it would otherwise be unable to push at all. CI lints the whole
+    # workspace including that crate.
+    clippy:
+      run: cargo clippy --workspace --exclude pfs3-fuse --all-targets -- -D warnings
+    # Off on purpose. Measured at 27.6 s on its own, and together with clippy
+    # that leaves no reserve inside the 30 s budget. The full matrix runs in CI.
+    tests:
+      run: cargo nextest run --workspace --exclude pfs3-fuse
+      skip: true
