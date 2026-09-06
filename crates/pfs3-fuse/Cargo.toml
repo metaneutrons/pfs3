@@ -79,9 +79,20 @@ unused_self = "allow"
 needless_pass_by_value = "allow"
 unnecessary_wraps = "allow"
 
+# A cargo-group lint about the dependency graph rather than about this code.
+# fuser pulls in a second major of a few transitive crates; cargo resolves both
+# and nothing here can change it short of a dependency change of its own.
+multiple_crate_versions = "allow"
+
 [dependencies]
 libpfs3 = { path = "../libpfs3" }
-fuser = "0.16"
+# fuser 0.16 changed its default features from ["libfuse"] to [], so a bare
+# version bump would silently drop libfuse3 on Linux for the pure-Rust mount
+# implementation and break the macOS build outright, since that
+# implementation only exists on Linux. The feature is therefore named
+# explicitly, which keeps the behaviour 0.15 had and the .deb dependency on
+# libfuse3-3 accurate.
+fuser = { version = "0.16", features = ["libfuse"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 log = "0.4"
