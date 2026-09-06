@@ -78,7 +78,7 @@ jobs:
           cp target/${{ matrix.target }}/release/pfs3 .
           chmod +x pfs3
           tar czf "pfs3-${VERSION}-${{ matrix.target }}.tar.gz" pfs3 README.md LICENSE
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: "*.tar.gz"
@@ -117,7 +117,7 @@ jobs:
           cp target/${{ matrix.target }}/release/pfs3-fuse .
           chmod +x pfs3-fuse
           tar czf "pfs3-fuse-${VERSION}-${{ matrix.target }}.tar.gz" pfs3-fuse README.md LICENSE
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: fuse-${{ matrix.target }}
           path: "*.tar.gz"
@@ -144,7 +144,7 @@ jobs:
       - run: cargo deb -p ${{ matrix.pkg }} --no-build
       - name: Copy .deb
         run: cp target/debian/*.deb .
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.pkg }}
           path: "*.deb"
