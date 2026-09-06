@@ -144,6 +144,24 @@ jobs:
           out=$(env -i "target/$TARGET/release/pfs3" --version)
           echo "$out"
           printf '%s' "$out" | grep -Fq "${{ needs.metadata.outputs.version }}"
+      # macOS ships bsdtar, which knows none of --sort, --owner, --group or
+      # --numeric-owner. A normalised archive therefore needs GNU tar on both
+      # platforms; without it the step passes on Linux and fails on macOS.
+      - name: Resolve a GNU tar
+        id: tar
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install gnu-tar >/dev/null
+            bin="$(brew --prefix gnu-tar)/libexec/gnubin/tar"
+            [ -x "$bin" ] || bin="$(command -v gtar)"
+          else
+            bin=tar
+          fi
+          test -n "$bin"
+          "$bin" --version | head -1
+          "$bin" --version | head -1 | grep -q "GNU tar"
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Create the archive
         env:
           TARGET: ${{ matrix.target }}
@@ -154,7 +172,7 @@ jobs:
           mkdir -p out stage
           cp "target/$TARGET/release/pfs3" README.md LICENSE stage/
           chmod 755 stage/pfs3
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
+          "${{ steps.tar.outputs.bin }}" --sort=name --owner=0 --group=0 --numeric-owner \
               --mtime="@${SOURCE_DATE_EPOCH}" \
               -czf "out/pfs3-${VERSION}-${TARGET}.tar.gz" -C stage .
           tar tzf "out/pfs3-${VERSION}-${TARGET}.tar.gz"
@@ -217,6 +235,24 @@ jobs:
           else
             otool -L "$bin"
           fi
+      # macOS ships bsdtar, which knows none of --sort, --owner, --group or
+      # --numeric-owner. A normalised archive therefore needs GNU tar on both
+      # platforms; without it the step passes on Linux and fails on macOS.
+      - name: Resolve a GNU tar
+        id: tar
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install gnu-tar >/dev/null
+            bin="$(brew --prefix gnu-tar)/libexec/gnubin/tar"
+            [ -x "$bin" ] || bin="$(command -v gtar)"
+          else
+            bin=tar
+          fi
+          test -n "$bin"
+          "$bin" --version | head -1
+          "$bin" --version | head -1 | grep -q "GNU tar"
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Create the archive
         env:
           TARGET: ${{ matrix.target }}
@@ -227,7 +263,7 @@ jobs:
           mkdir -p out stage
           cp target/release/pfs3-fuse README.md LICENSE stage/
           chmod 755 stage/pfs3-fuse
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
+          "${{ steps.tar.outputs.bin }}" --sort=name --owner=0 --group=0 --numeric-owner \
               --mtime="@${SOURCE_DATE_EPOCH}" \
               -czf "out/pfs3-fuse-${VERSION}-${TARGET}.tar.gz" -C stage .
           tar tzf "out/pfs3-fuse-${VERSION}-${TARGET}.tar.gz"
