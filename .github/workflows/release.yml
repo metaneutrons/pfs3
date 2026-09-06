@@ -156,7 +156,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Collect assets
@@ -177,7 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.meta.outputs.is_prerelease == 'false'
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Calculate checksums
