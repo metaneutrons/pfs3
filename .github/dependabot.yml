@@ -1,0 +1,61 @@
+# Dependency updates for this repository: the cargo workspace, the pinned
+# toolchain and the GitHub Actions used by the workflows.
+#
+# The grouping is deliberately separated by update kind. One group with
+# `patterns: ['*']` across all kinds bundles breaking changes with harmless
+# bumps, and one broken dependency then blocks the whole stack. Minor and patch
+# stay bundled, because checking them individually gains nothing there. Major
+# stays ungrouped, so that each case arrives on its own.
+#
+# `cooldown` keeps a version that is withdrawn shortly after publication out of
+# every pull request.
+# Without a `timezone`, times are in UTC.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    groups:
+      rust-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # An entry of its own, because the toolchain affects the whole build and
+  # should never share a pull request. `rust-toolchain` is missing from the
+  # ecosystem table in the GitHub documentation but is present in the published
+  # schema json.schemastore.org/dependabot-2.0.json.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:05'
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 14
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:15'
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+      # semver-major-days is not permitted for github-actions. If it stands
+      # here, Dependabot rejects the ENTIRE file and not a single update runs
+      # any more, not even a security update.
+    groups:
+      github-actions-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+

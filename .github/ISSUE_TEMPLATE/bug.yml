@@ -1,0 +1,46 @@
+name: Bug report
+description: Something behaves differently from what is documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        The exact command line. If a disk image is involved, say how it was
+        created (pfs3aio, this project's mkfs, Coffin OS, something else) and
+        its size. Do not attach an image containing data you cannot share.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `pfs3 --version` or `pfs3-fuse --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - pfs3 (CLI)
+        - pfs3-fuse (FUSE driver)
+        - libpfs3 (library)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system, version and architecture. For FUSE, the FUSE implementation and its version.
+    validations:
+      required: true

@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a capability the project does not have yet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you cannot do today, and in what situation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What the behaviour should be. A CLI sketch helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: format
+    attributes:
+      label: On-disk format
+      options:
+        - label: This would change what is written to disk
