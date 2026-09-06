@@ -159,8 +159,11 @@ jobs:
             bin=tar
           fi
           test -n "$bin"
-          "$bin" --version | head -1
-          "$bin" --version | head -1 | grep -q "GNU tar"
+          # Captured rather than piped into head: an early-exiting consumer
+          # can kill the producer and pipefail then fails the step.
+          ver=$("$bin" --version)
+          printf '%s\n' "$ver" | head -1
+          case "$ver" in *"GNU tar"*) ;; *) echo "::error::not GNU tar: $bin"; exit 1 ;; esac
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Create the archive
         env:
@@ -250,8 +253,11 @@ jobs:
             bin=tar
           fi
           test -n "$bin"
-          "$bin" --version | head -1
-          "$bin" --version | head -1 | grep -q "GNU tar"
+          # Captured rather than piped into head: an early-exiting consumer
+          # can kill the producer and pipefail then fails the step.
+          ver=$("$bin" --version)
+          printf '%s\n' "$ver" | head -1
+          case "$ver" in *"GNU tar"*) ;; *) echo "::error::not GNU tar: $bin"; exit 1 ;; esac
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Create the archive
         env:
@@ -468,12 +474,16 @@ jobs:
           # may be assumed: the generator measures the top level of the actual
           # tar listing and writes it into the PKGBUILD as _srcdir.
           curl -sSfL -o src.tar.gz "https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
-          srcdir=$(tar tzf src.tar.gz | cut -d/ -f1 | sort -u)
+          # Materialise the listing once. Piping tar into `grep -q` would make
+          # grep close the pipe on its first match, tar die of a write error
+          # and pipefail fail the whole step.
+          tar tzf src.tar.gz > listing.txt
+          srcdir=$(cut -d/ -f1 listing.txt | sort -u)
           test "$(printf '%s\n' "$srcdir" | wc -l)" -eq 1
           srcsum=$(sha256sum src.tar.gz | cut -d' ' -f1)
           echo "::notice::source archive root: $srcdir"
           # The measured root must actually hold the workspace manifest.
-          tar tzf src.tar.gz | grep -Fxq "${srcdir}/Cargo.toml"
+          grep -Fxq "${srcdir}/Cargo.toml" listing.txt
 
           for pkg in pfs3 pfs3-fuse; do
             if [ "$pkg" = pfs3 ]; then
