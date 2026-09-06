@@ -761,12 +761,20 @@ jobs:
           while read -r f; do cmp "$f" "../candidate/$f"; done < /tmp/want.txt
           sha256sum -c SHA256SUMS
           # And the signatures against the downloaded bytes, not the built ones.
-          grep -vE '\.sigstore\.json$|^SHA256SUMS$' /tmp/want.txt | while read -r f; do
+          # The signed set is derived from the bundles that are actually there,
+          # not from an exclusion list: SBOMs deliberately carry no bundle of
+          # their own, and a hand-maintained filter got that wrong.
+          find . -maxdepth 1 -name '*.sigstore.json' -printf '%f\n' \
+            | sed 's/\.sigstore\.json$//' | sort > /tmp/signed.txt
+          # 12 payloads plus 3 channel metadata files.
+          test "$(wc -l < /tmp/signed.txt)" -eq 15
+          while read -r f; do
+            test -f "$f"
             cosign verify-blob --bundle "${f}.sigstore.json" \
               --certificate-identity-regexp "^https://github.com/${REPO}/\\.github/workflows/release\\.yml@" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$f" >/dev/null
-          done
+          done < /tmp/signed.txt
           echo "::notice::the draft serves the candidate byte for byte"
       - name: Publish as a prerelease, never as latest
         env:
