@@ -18,7 +18,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(15000);
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_fault_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_fault_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "FaultTest".into(),
@@ -103,10 +103,7 @@ impl BlockDevice for MemBlockDevice {
         if remaining > 0 {
             let prev = self.writes_until_fail.fetch_sub(1, Ordering::SeqCst);
             if prev == 1 {
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "injected write failure",
-                )));
+                return Err(Error::Io(std::io::Error::other("injected write failure")));
             }
         }
         self.write_count.fetch_add(1, Ordering::SeqCst);
@@ -233,7 +230,7 @@ mod power_loss {
             let Ok(mut w) = Writer::open(vol) else {
                 continue;
             };
-            let _ = op(&mut w);
+            let () = op(&mut w);
         }
     }
 
@@ -329,7 +326,7 @@ mod disk_full {
         let mut w = open_writer(&path);
         let mut files = Vec::new();
         for i in 0..100 {
-            let name = format!("f{}.bin", i);
+            let name = format!("f{i}.bin");
             let data = vec![i as u8; 256];
             if w.write_file(&name, &data).is_ok() {
                 files.push((name, data));
@@ -343,7 +340,7 @@ mod disk_full {
         let mut vol = reopen(&path);
         for (name, expected) in &files {
             let data = vol.read_file(name).unwrap();
-            assert_eq!(&data, expected, "data mismatch for {}", name);
+            assert_eq!(&data, expected, "data mismatch for {name}");
         }
         std::fs::remove_file(&path).ok();
     }
@@ -354,7 +351,7 @@ mod disk_full {
         let mut w = open_writer(&path);
         let mut count = 0;
         for i in 0..100 {
-            if w.write_file(&format!("x{}.txt", i), &[0; 64]).is_ok() {
+            if w.write_file(&format!("x{i}.txt"), &[0; 64]).is_ok() {
                 count += 1;
             } else {
                 break;

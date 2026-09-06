@@ -3,13 +3,91 @@ members = ["crates/libpfs3", "crates/pfs3-fuse", "."]
 exclude = ["crates/libpfs3/fuzz"]
 resolver = "3"
 
+[workspace.package]
+edition = "2024"
+license = "LGPL-3.0-or-later"
+authors = ["Fabian Schmieder <436979+metaneutrons@users.noreply.github.com>"]
+repository = "https://github.com/metaneutrons/pfs3"
+homepage = "https://github.com/metaneutrons/pfs3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Exceptions from pedantic and nursery. Each one is a decision, not a blanket
+# quieting: everything not listed here is enforced, so new code gets checked.
+#
+# The four cast lints are the domain. PFS3 is an on-disk format of fixed-width
+# big-endian fields, and the code converts between those widths and host-sized
+# indices on almost every line. The widths come from the format and are range
+# checked when a block is parsed, so the lints fire on the correct conversions
+# rather than on suspect ones.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+
+# Documentation backlog rather than a judgement that the docs do not matter.
+# libpfs3 is published to crates.io and these belong there eventually; 166
+# missing sections are their own piece of work, not part of a hygiene pass.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# Fires on every accessor of a filesystem structure and would add `#[must_use]`
+# to well over seventy of them without making a single misuse harder.
+must_use_candidate = "allow"
+
+# The domain vocabulary is full of bare identifiers that are not code: PFS3,
+# AmigaOS, SUPERINDEX, RDB, Trashcan. Backticking them in prose reads worse.
+doc_markdown = "allow"
+
+# The literals this fires on are on-disk magic numbers and Unix modes:
+# 0x50465303 is the PFS3 DosType, 0x444F5301 is DOS\1, 0o100000 is S_IFREG.
+# Grouping them into triples breaks exactly the structure that makes them
+# readable. Where a long decimal genuinely benefits, the code uses separators.
+unreadable_literal = "allow"
+
+# const-ness is part of the public API of a published crate. Adopting it
+# wherever the compiler currently permits it commits the library to keeping it.
+missing_const_for_fn = "allow"
+
+# Nursery lints whose suggestions here are either wrong or a wash.
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+
+# Structural style on code that mirrors the on-disk layout. The long functions
+# are the block parsers and the formatter, where splitting hides the sequence
+# the format prescribes; the name collisions are pairs like `anode`/`anode_nr`
+# that the format itself names that way.
+too_many_lines = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+unused_self = "allow"
+needless_pass_by_value = "allow"
+unnecessary_wraps = "allow"
+
 [package]
 name = "pfs3"
 version = "0.1.3"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 default-run = "pfs3"
-license = "LGPL-3.0-or-later"
 description = "PFS3 (Professional File System III) tools for Amiga disk images"
+# Shipped as a binary through GitHub releases, Homebrew, AUR and .deb.
+# Only libpfs3 goes to crates.io.
+publish = false
+
+[lints]
+workspace = true
 
 [dependencies]
 libpfs3 = { path = "crates/libpfs3" }

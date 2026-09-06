@@ -53,7 +53,7 @@ pub fn run_overview(image: &Path, partitions: &[PartitionInfo]) -> Result<()> {
             vol.free_blocks(),
             vol.block_size()
         );
-        println!("  Created: {}", created);
+        println!("  Created: {created}");
         println!("  Flags:   {}\n", rb.flags_string());
     }
 

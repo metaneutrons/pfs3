@@ -25,7 +25,7 @@ fn open_pfs() -> Volume {
         if !hdf.exists() {
             let archive = fixtures_dir().join("pfs.7z");
             assert!(archive.exists(), "pfs.7z fixture missing");
-            sevenz_rust::decompress_file(&archive, &fixtures_dir())
+            sevenz_rust2::decompress_file(&archive, fixtures_dir())
                 .expect("failed to extract pfs.7z");
         }
     });
@@ -214,7 +214,7 @@ macro_rules! tests_for_image {
                 let entries = vol.list_dir("/").unwrap();
                 let file = entries.iter().find(|e| e.is_file()).unwrap();
                 let blocks = vol.validate_anode_chain(file.anode).unwrap();
-                let expected = (file.file_size() + 511) / 512;
+                let expected = file.file_size().div_ceil(512);
                 assert_eq!(blocks.len() as u64, expected);
             }
 

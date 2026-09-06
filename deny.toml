@@ -1,0 +1,46 @@
+# cargo-deny. Checks advisories, licences, duplicates and registries.
+# Every entry under `ignore` needs a reason, the affected crate and the
+# condition under which it is removed again.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# This list governs the dependencies. The project's own licence belongs in it
+# as well, otherwise the check fails on the project's own crates. All three
+# crates of this workspace are LGPL-3.0-or-later.
+#
+# The dependency tree was surveyed on 6 September 2026 and is fully permissive:
+# MIT, Apache-2.0, BSD-2-Clause, Unlicense and Unicode-3.0, no GPL crate. That
+# matters here beyond the usual: LGPL is the weaker copyleft and cannot absorb
+# a GPL dependency, so a GPL crate anywhere in libpfs3's tree would make the
+# library GPL rather than LGPL.
+allow = [
+    "LGPL-3.0-or-later",
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# `pfs3` and `pfs3-fuse` depend on `libpfs3` by path without a version, which
+# is correct: both carry `publish = false` and never reach a registry, so there
+# is no version for a consumer to resolve. This switch keeps `wildcards = deny`
+# in force for every registry dependency and exempts exactly that private case.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

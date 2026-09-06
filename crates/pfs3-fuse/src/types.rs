@@ -199,7 +199,12 @@ impl Pfs3Fs {
         let block_size = vol.block_size();
         let rb = &vol.rootblock;
         // SAFETY: getuid/getgid are always safe to call (no preconditions).
+        // This is the only `unsafe` in the workspace; see the lint note in this
+        // crate's Cargo.toml for why the crate lowers `unsafe_code` to `deny`
+        // instead of inheriting the workspace's `forbid`.
+        #[expect(unsafe_code, reason = "libc::getuid has no preconditions")]
         let uid = unsafe { libc::getuid() };
+        #[expect(unsafe_code, reason = "libc::getgid has no preconditions")]
         let gid = unsafe { libc::getgid() };
         let time = util::amiga_to_systime(rb.creation_day, rb.creation_minute, rb.creation_tick);
 

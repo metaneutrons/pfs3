@@ -15,7 +15,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(17000);
 
 fn fresh_image_with_deldir(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_deldir_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_deldir_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "DelTest".into(),
@@ -28,7 +28,7 @@ fn fresh_image_with_deldir(blocks: u64) -> PathBuf {
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_deldir_nd_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_deldir_nd_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "NoDel".into(),

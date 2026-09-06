@@ -8,7 +8,10 @@ use crate::cache::BlockCache;
 use crate::dir;
 use crate::error::{Error, Result};
 use crate::io::{BlockDevice, FileBlockDevice};
-use crate::ondisk::*;
+use crate::ondisk::{
+    DELDIR_ENTRY_SIZE, DELDIR_HEADER_SIZE, DELDIRID, DelDirEntry, DirEntry, MODE_DELDIR, ROOTBLOCK,
+    Rootblock, RootblockExt, deldir_entries_per_block,
+};
 use crate::rdb::detect_pfs3_partition;
 
 /// A mounted PFS3 volume providing read access to files and directories.
@@ -177,7 +180,7 @@ impl Volume {
 
     /// Maximum filename length (32 or 107 with long filenames).
     pub fn fnsize(&self) -> u16 {
-        self.rootblock_ext.as_ref().map(|e| e.fnsize).unwrap_or(32)
+        self.rootblock_ext.as_ref().map_or(32, |e| e.fnsize)
     }
 
     /// Count free blocks by scanning the data bitmap.
@@ -374,9 +377,8 @@ impl Volume {
         if !self.rootblock.has_flag(MODE_DELDIR) {
             return Ok(Vec::new());
         }
-        let rext = match &self.rootblock_ext {
-            Some(e) => e,
-            None => return Ok(Vec::new()),
+        let Some(rext) = &self.rootblock_ext else {
+            return Ok(Vec::new());
         };
         let rbs = self.rootblock.reserved_blksize;
         let entries_per_block = deldir_entries_per_block(rbs);

@@ -7,7 +7,7 @@ use crate::anode::AnodeReader;
 use crate::cache::BlockCache;
 use crate::error::{Error, Result};
 use crate::io::BlockDevice;
-use crate::ondisk::*;
+use crate::ondisk::{ANODE_ROOTDIR, DBLKID, DIR_BLOCK_HEADER_SIZE, DirEntry};
 use crate::util;
 
 /// List all entries in a directory given its anode number.
@@ -69,6 +69,7 @@ pub fn lookup(
 }
 
 /// Resolve a '/'-separated path to a DirEntry.
+///
 /// Returns `Ok(None)` for the root directory or if the final component doesn't exist.
 /// Returns `Err(NotFound)` if an intermediate directory doesn't exist.
 /// Returns `Err(NotADirectory)` if an intermediate component is a file.

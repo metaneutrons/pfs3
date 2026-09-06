@@ -1,4 +1,3 @@
-#![deny(warnings)]
 //! libpfs3 — PFS3 (Professional File System III) library.
 //!
 //! Pure Rust implementation of the Amiga PFS3 filesystem. Supports reading,

@@ -15,7 +15,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(12000);
 
 fn temp_image(size_blocks: u64) -> (PathBuf, FileBlockDevice) {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_test_mkfs_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_test_mkfs_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, size_blocks).unwrap();
     (path, dev)
 }
@@ -120,7 +120,7 @@ fn format_various_sizes() {
 #[test]
 fn format_minimum_size() {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_min_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_min_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, 64).unwrap();
     let opts = FormatOptions {
         volume_name: "Tiny".into(),
@@ -140,7 +140,7 @@ fn format_minimum_size() {
 #[test]
 fn format_then_write_on_minimum_disk() {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_minw_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_minw_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, 128).unwrap();
     let opts = FormatOptions {
         volume_name: "MinW".into(),

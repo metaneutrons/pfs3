@@ -8,7 +8,13 @@
 //! - Rootblock update
 
 use crate::error::{Error, Result};
-use crate::ondisk::*;
+use crate::ondisk::{
+    ABLKID, ANODE_BLOCK_HEADER_SIZE, ANODE_EOF, ANODE_ROOTDIR, ANODE_SIZE, ANODE_USERFIRST, DBLKID,
+    DELDIR_ENTRY_SIZE, DELDIR_HEADER_SIZE, DIR_BLOCK_HEADER_SIZE, DelDirEntry, IBLKID,
+    INDEX_BLOCK_HEADER_SIZE, RB_OFF_BLOCKSFREE, RB_OFF_DATESTAMP, RB_OFF_DISKNAME,
+    RB_OFF_RESERVED_FREE, ST_FILE, ST_LINKFILE, ST_ROLLOVERFILE, ST_SOFTLINK, ST_USERDIR,
+    deldir_entries_per_block, put_u16, put_u32, write_reserved_blocks,
+};
 use crate::volume::Volume;
 
 /// Writable PFS3 volume — file/directory creation, deletion, and formatting.
@@ -249,8 +255,7 @@ impl Writer {
         let slot_idx = deldir_idx % entries_per_block;
         if block_idx >= deldirblocks.len() {
             return Err(Error::NotFound(format!(
-                "deldir index {} out of range",
-                deldir_idx
+                "deldir index {deldir_idx} out of range"
             )));
         }
         let blk = deldirblocks[block_idx];
@@ -401,14 +406,13 @@ impl Writer {
                 self.write_anode_fields(an.nr, remaining, an.blocknr, ANODE_EOF)?;
                 self.free_and_clear_anodes(&chain[idx + 1..])?;
                 return Ok(());
-            } else {
-                remaining -= an.clustersize;
-                if remaining == 0 {
-                    // This anode is the new tail — set next=EOF
-                    self.write_anode_fields(an.nr, an.clustersize, an.blocknr, ANODE_EOF)?;
-                    self.free_and_clear_anodes(&chain[idx + 1..])?;
-                    return Ok(());
-                }
+            }
+            remaining -= an.clustersize;
+            if remaining == 0 {
+                // This anode is the new tail — set next=EOF
+                self.write_anode_fields(an.nr, an.clustersize, an.blocknr, ANODE_EOF)?;
+                self.free_and_clear_anodes(&chain[idx + 1..])?;
+                return Ok(());
             }
         }
         Ok(())
@@ -654,13 +658,14 @@ impl Writer {
 
     /// Move a deleted file entry to the deldir. Returns false if deldir not enabled.
     fn move_to_deldir(&mut self, entry: &crate::ondisk::DirEntry) -> bool {
-        use crate::ondisk::*;
+        use crate::ondisk::{
+            DELDIR_ENTRY_SIZE, DELDIR_HEADER_SIZE, DELDIRID, MODE_DELDIR, deldir_entries_per_block,
+        };
         if !self.vol.rootblock.has_flag(MODE_DELDIR) {
             return false;
         }
-        let rext = match &self.vol.rootblock_ext {
-            Some(e) => e,
-            None => return false,
+        let Some(rext) = &self.vol.rootblock_ext else {
+            return false;
         };
         let deldirblocks: Vec<u32> = rext
             .deldirblocks
@@ -677,9 +682,8 @@ impl Writer {
 
         // Find a free slot (anode == 0) using roving pointer
         for blk in &deldirblocks {
-            let data = match self.read_reserved_raw(*blk) {
-                Ok(d) => d,
-                Err(_) => continue,
+            let Ok(data) = self.read_reserved_raw(*blk) else {
+                continue;
             };
             if u16::from_be_bytes(data[0..2].try_into().unwrap()) != DELDIRID {
                 continue;
@@ -703,9 +707,8 @@ impl Writer {
 
         // Deldir full — evict oldest entry (first slot of first block)
         let blk = deldirblocks[0];
-        let data = match self.read_reserved_raw(blk) {
-            Ok(d) => d,
-            Err(_) => return false,
+        let Ok(data) = self.read_reserved_raw(blk) else {
+            return false;
         };
         let off = DELDIR_HEADER_SIZE;
         let evict_anode = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
@@ -796,8 +799,7 @@ impl Writer {
             }
         }
         Err(Error::DiskFull(format!(
-            "not enough free blocks (need {})",
-            count
+            "not enough free blocks (need {count})"
         )))
     }
 
@@ -1245,7 +1247,7 @@ impl Writer {
     /// Flush all pending reserved block writes to disk.
     fn flush_pending(&mut self) -> Result<()> {
         let bs = self.vol.block_size() as usize;
-        let writes: Vec<(u32, Vec<u8>)> = self.pending_writes.drain(..).collect();
+        let writes: Vec<(u32, Vec<u8>)> = std::mem::take(&mut self.pending_writes);
         for (blk, data) in &writes {
             write_reserved_blocks(
                 self.vol.dev.as_ref(),

@@ -20,7 +20,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(13000);
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_corrupt_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_corrupt_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "CorruptTest".into(),
@@ -265,7 +265,7 @@ mod corrupt_images {
     #[test]
     fn rootblock_with_extension_pointing_oob_no_panic() {
         let mut data = format_mem(4096);
-        put_be32(&mut data, 2 * 512 + 0x58, 999999);
+        put_be32(&mut data, 2 * 512 + 0x58, 999_999);
         let opts_off = 2 * 512 + 0x04;
         let opts = u32::from_be_bytes(data[opts_off..opts_off + 4].try_into().unwrap());
         put_be32(&mut data, opts_off, opts | MODE_EXTENSION);

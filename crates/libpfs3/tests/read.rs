@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use libpfs3::format::{self, FormatOptions};
 use libpfs3::io::FileBlockDevice;
-use libpfs3::ondisk::*;
 use libpfs3::volume::Volume;
 use libpfs3::writer::Writer;
 
@@ -18,7 +17,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(10000);
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_read_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_read_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "ReadTest".into(),
@@ -351,11 +350,11 @@ mod fragmented_reads {
     fn create_fragmented_file(path: &Path) -> (u32, u64) {
         let mut w = open_writer(path);
         for i in 0..10 {
-            w.write_file(&format!("pad{}.bin", i), &vec![i as u8; 512])
+            w.write_file(&format!("pad{i}.bin"), &vec![i as u8; 512])
                 .unwrap();
         }
         for i in (0..10).step_by(2) {
-            w.delete(&format!("pad{}.bin", i)).unwrap();
+            w.delete(&format!("pad{i}.bin")).unwrap();
         }
         let data: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
         w.write_file("fragmented.bin", &data).unwrap();

@@ -11,10 +11,10 @@ pub fn run_writer(w: &mut Writer, path: &str, spec: &str) -> Result<()> {
     let entry = w
         .vol
         .lookup(path)?
-        .ok_or_else(|| anyhow::anyhow!("not found: {}", path))?;
+        .ok_or_else(|| anyhow::anyhow!("not found: {path}"))?;
 
     let new_prot = util::parse_amiga_protection(entry.protection, spec)
-        .ok_or_else(|| anyhow::anyhow!("invalid protection spec: {}", spec))?;
+        .ok_or_else(|| anyhow::anyhow!("invalid protection spec: {spec}"))?;
 
     let parent_anode = if parts.len() == 1 {
         libpfs3::ondisk::ANODE_ROOTDIR
@@ -22,8 +22,7 @@ pub fn run_writer(w: &mut Writer, path: &str, spec: &str) -> Result<()> {
         let parent_path = parts[..parts.len() - 1].join("/");
         w.vol
             .lookup(&parent_path)?
-            .map(|e| e.anode)
-            .unwrap_or(libpfs3::ondisk::ANODE_ROOTDIR)
+            .map_or(libpfs3::ondisk::ANODE_ROOTDIR, |e| e.anode)
     };
 
     w.update_dir_entry_protection(parent_anode, name, new_prot)?;

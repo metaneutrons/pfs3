@@ -1,5 +1,5 @@
 use anyhow::Result;
-use libpfs3::ondisk::*;
+use libpfs3::ondisk::{ANODE_ROOTDIR, ST_ROLLOVERFILE};
 use libpfs3::volume::Volume;
 use libpfs3::writer::Writer;
 use std::collections::{HashMap, HashSet};
@@ -57,10 +57,7 @@ pub fn run(image: &Path, offset: u64, partition: Option<&str>, repair: bool) -> 
         // Check 1: rootblock validity
         print!("Checking rootblock... ");
         if firstreserved >= lastreserved {
-            println!(
-                "ERROR: invalid reserved area ({}-{})",
-                firstreserved, lastreserved
-            );
+            println!("ERROR: invalid reserved area ({firstreserved}-{lastreserved})");
             ctx.errors += 1;
         } else if disksize == 0 {
             println!("ERROR: disksize is 0");
@@ -90,21 +87,20 @@ pub fn run(image: &Path, offset: u64, partition: Option<&str>, repair: bool) -> 
         let reserved_blocks = lastreserved + 1;
         let data_area_val = disksize - reserved_blocks;
 
-        if bitmap_free != blocksfree {
-            println!(
-                "WARNING: rootblock says {} free, bitmap scan says {} free",
-                blocksfree, bitmap_free
-            );
-            ctx.warnings += 1;
-            if repair {
-                ctx.correct_blocksfree = Some(bitmap_free);
-            }
-        } else {
+        if bitmap_free == blocksfree {
             println!(
                 "OK (bitmap: {} free, tree: {} data blocks used)",
                 bitmap_free,
                 ctx.used_blocks.len()
             );
+        } else {
+            println!(
+                "WARNING: rootblock says {blocksfree} free, bitmap scan says {bitmap_free} free"
+            );
+            ctx.warnings += 1;
+            if repair {
+                ctx.correct_blocksfree = Some(bitmap_free);
+            }
         }
 
         // Check 5: duplicate block detection (handled during scan_dir via HashMap)
@@ -125,17 +121,16 @@ pub fn run(image: &Path, offset: u64, partition: Option<&str>, repair: bool) -> 
         let reserved_free = vol.rootblock.reserved_free;
         match vol.reserved_count_free() {
             Ok(actual_free) => {
-                if actual_free != reserved_free {
+                if actual_free == reserved_free {
+                    println!("OK ({reserved_free} reserved free)");
+                } else {
                     println!(
-                        "WARNING: rootblock says {} reserved free, bitmap says {}",
-                        reserved_free, actual_free
+                        "WARNING: rootblock says {reserved_free} reserved free, bitmap says {actual_free}"
                     );
                     ctx.warnings += 1;
                     if repair {
                         ctx.correct_reserved_free = Some(actual_free);
                     }
-                } else {
-                    println!("OK ({} reserved free)", reserved_free);
                 }
             }
             Err(_) => println!("SKIP (could not read reserved bitmap)"),
@@ -156,29 +151,28 @@ pub fn run(image: &Path, offset: u64, partition: Option<&str>, repair: bool) -> 
 
         if let Some(bf) = ctx.correct_blocksfree {
             w.repair_blocksfree(bf)?;
-            println!("  REPAIRED: blocksfree set to {}", bf);
+            println!("  REPAIRED: blocksfree set to {bf}");
             ctx.repairs += 1;
         }
         if let Some(rf) = ctx.correct_reserved_free {
             w.repair_reserved_free(rf)?;
-            println!("  REPAIRED: reserved_free set to {}", rf);
+            println!("  REPAIRED: reserved_free set to {rf}");
             ctx.repairs += 1;
         }
 
         for (parent_anode, name) in &ctx.broken_files {
             match w.force_remove_entry(*parent_anode, name) {
                 Ok(()) => {
-                    println!("  REPAIRED: removed broken entry '{}'", name);
+                    println!("  REPAIRED: removed broken entry '{name}'");
                     ctx.repairs += 1;
                 }
-                Err(e) => println!("  FAILED to remove '{}': {}", name, e),
+                Err(e) => println!("  FAILED to remove '{name}': {e}"),
             }
         }
 
         for (_parent_anode, name, correct_size) in &ctx.wrong_size {
             println!(
-                "  WARNING: '{}' should be {} bytes (chain too short) — manual fix needed",
-                name, correct_size
+                "  WARNING: '{name}' should be {correct_size} bytes (chain too short) — manual fix needed"
             );
         }
     }
@@ -214,14 +208,14 @@ fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
     const MAX_DEPTH: usize = libpfs3::ondisk::MAX_DIR_DEPTH;
     let depth = path.matches('/').count();
     if depth > MAX_DEPTH {
-        println!("  ERROR: directory nesting too deep at {}", path);
+        println!("  ERROR: directory nesting too deep at {path}");
         ctx.errors += 1;
         return;
     }
     let entries = match vol.list_dir_by_anode(dir_anode) {
         Ok(e) => e,
         Err(e) => {
-            println!("  ERROR reading dir {}: {}", path, e);
+            println!("  ERROR reading dir {path}: {e}");
             ctx.errors += 1;
             return;
         }
@@ -238,7 +232,7 @@ fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
                     record_anode_chain(vol, entry.anode, &mut ctx.used_anodes);
                 }
                 Err(e) => {
-                    println!("  ERROR: dir {} anode chain: {}", entry_path, e);
+                    println!("  ERROR: dir {entry_path} anode chain: {e}");
                     ctx.errors += 1;
                     ctx.broken_files.push((dir_anode, entry.name.clone()));
                     continue;
@@ -269,7 +263,7 @@ fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
                     record_anode_chain(vol, entry.anode, &mut ctx.used_anodes);
                 }
                 Err(e) => {
-                    println!("  ERROR: file {} anode chain: {}", entry_path, e);
+                    println!("  ERROR: file {entry_path} anode chain: {e}");
                     ctx.errors += 1;
                     ctx.broken_files.push((dir_anode, entry.name.clone()));
                 }
@@ -281,10 +275,7 @@ fn scan_dir(vol: &mut Volume, dir_anode: u32, path: &str, ctx: &mut CheckCtx) {
 fn record_blocks(blocks: Vec<u64>, owner: &str, ctx: &mut CheckCtx) {
     for b in blocks {
         if let Some(prev_owner) = ctx.used_blocks.insert(b, owner.to_string()) {
-            println!(
-                "  ERROR: block {} claimed by both '{}' and '{}'",
-                b, prev_owner, owner
-            );
+            println!("  ERROR: block {b} claimed by both '{prev_owner}' and '{owner}'");
             ctx.errors += 1;
         }
     }

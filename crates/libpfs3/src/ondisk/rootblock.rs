@@ -3,7 +3,12 @@
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
 
-use super::*;
+use super::{
+    ANODE_BLOCK_HEADER_SIZE, ANODE_SIZE, EXTENSIONID, MAXBITMAPINDEX, MAXSMALLBITMAPINDEX,
+    MAXSMALLINDEXNR, MAXSUPER, MODE_DATESTAMP, MODE_DELDIR, MODE_DIR_EXTENSION, MODE_EXTENSION,
+    MODE_EXTROVING, MODE_HARDDISK, MODE_LARGEFILE, MODE_LONGFN, MODE_SIZEFIELD,
+    MODE_SPLITTED_ANODES, MODE_SUPERDELDIR, MODE_SUPERINDEX, PFS_TYPES,
+};
 use crate::error::{Error, Result};
 
 /// PFS3 rootblock — the filesystem superblock at partition block 2.
