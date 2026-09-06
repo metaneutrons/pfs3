@@ -18,7 +18,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(11000);
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_write_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_write_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "WrTest".into(),
@@ -118,19 +118,16 @@ mod writer_tests {
         let path = fresh_image(8192);
         let mut w = open_writer(&path);
         for i in 0..10 {
-            w.write_file(
-                &format!("file_{}.txt", i),
-                format!("content {}", i).as_bytes(),
-            )
-            .unwrap();
+            w.write_file(&format!("file_{i}.txt"), format!("content {i}").as_bytes())
+                .unwrap();
         }
         drop(w);
         let mut vol = reopen(&path);
         let entries = vol.list_dir("/").unwrap();
         assert_eq!(entries.len(), 10);
         for i in 0..10 {
-            let data = vol.read_file(&format!("file_{}.txt", i)).unwrap();
-            assert_eq!(String::from_utf8_lossy(&data), format!("content {}", i));
+            let data = vol.read_file(&format!("file_{i}.txt")).unwrap();
+            assert_eq!(String::from_utf8_lossy(&data), format!("content {i}"));
         }
         std::fs::remove_file(&path).ok();
     }
@@ -195,7 +192,7 @@ mod overwrite_tests {
             .find(|e| e.name == "test.txt")
             .unwrap()
             .anode;
-        let big_data: Vec<u8> = (0..2048u16).flat_map(|i| i.to_le_bytes()).collect();
+        let big_data: Vec<u8> = (0..2048u16).flat_map(u16::to_le_bytes).collect();
         w.overwrite_file_in(ANODE_ROOTDIR, "test.txt", anode, &big_data)
             .unwrap();
         drop(w);
@@ -828,7 +825,7 @@ mod protection_bits {
         let path = fresh_image(8192);
         let mut w = open_writer(&path);
         for prot in 0..=255u8 {
-            let name = format!("p{:03}.txt", prot);
+            let name = format!("p{prot:03}.txt");
             w.write_file(&name, &[prot]).unwrap();
             w.update_dir_entry_protection(ANODE_ROOTDIR, &name, prot)
                 .unwrap();
@@ -920,16 +917,16 @@ mod volume_name {
         let mut w = open_writer(&path);
         let sizes = [0, 1, 511, 512, 513, 1023, 1024, 1025, 2048, 4096, 5000];
         for &size in &sizes {
-            let name = format!("size_{}.bin", size);
+            let name = format!("size_{size}.bin");
             let data = vec![0xAA; size];
             w.write_file(&name, &data).unwrap();
         }
         drop(w);
         let mut vol = reopen(&path);
         for &size in &sizes {
-            let name = format!("size_{}.bin", size);
+            let name = format!("size_{size}.bin");
             let entry = vol.lookup(&name).unwrap().unwrap();
-            assert_eq!(entry.file_size(), size as u64, "size mismatch for {}", name);
+            assert_eq!(entry.file_size(), size as u64, "size mismatch for {name}");
         }
         std::fs::remove_file(&path).ok();
     }
@@ -1011,8 +1008,7 @@ mod crash_consistency {
         let bitmap_free = vol.bitmap_count_free().unwrap();
         assert_eq!(
             reported_free, bitmap_free,
-            "rootblock free={} but bitmap says {}",
-            reported_free, bitmap_free
+            "rootblock free={reported_free} but bitmap says {bitmap_free}"
         );
         std::fs::remove_file(&path).ok();
     }

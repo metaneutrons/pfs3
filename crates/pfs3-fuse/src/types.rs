@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use fuser::{FileAttr, FileType};
 
-use libpfs3::ondisk::*;
+use libpfs3::ondisk::{ANODE_ROOTDIR, DirEntry, MODE_DELDIR};
 use libpfs3::util;
 use libpfs3::volume::Volume;
 use libpfs3::writer::Writer;
@@ -36,22 +36,22 @@ pub enum VolumeAccess {
 impl VolumeAccess {
     pub fn vol(&self) -> &Volume {
         match self {
-            VolumeAccess::ReadOnly(v) => v,
-            VolumeAccess::ReadWrite(w) => &w.vol,
+            Self::ReadOnly(v) => v,
+            Self::ReadWrite(w) => &w.vol,
         }
     }
 
     pub fn vol_mut(&mut self) -> &mut Volume {
         match self {
-            VolumeAccess::ReadOnly(v) => v,
-            VolumeAccess::ReadWrite(w) => &mut w.vol,
+            Self::ReadOnly(v) => v,
+            Self::ReadWrite(w) => &mut w.vol,
         }
     }
 
     pub fn writer(&mut self) -> Option<&mut Writer> {
         match self {
-            VolumeAccess::ReadWrite(w) => Some(w),
-            _ => None,
+            Self::ReadWrite(w) => Some(w),
+            Self::ReadOnly(_) => None,
         }
     }
 }
@@ -90,7 +90,7 @@ pub fn rebuild_deldir(inner: &mut FsInner) {
         let display_name = if *count == 0 {
             base
         } else {
-            format!("{}.{}", base, count)
+            format!("{base}.{count}")
         };
         *count += 1;
 
@@ -199,7 +199,12 @@ impl Pfs3Fs {
         let block_size = vol.block_size();
         let rb = &vol.rootblock;
         // SAFETY: getuid/getgid are always safe to call (no preconditions).
+        // This is the only `unsafe` in the workspace; see the lint note in this
+        // crate's Cargo.toml for why the crate lowers `unsafe_code` to `deny`
+        // instead of inheriting the workspace's `forbid`.
+        #[expect(unsafe_code, reason = "libc::getuid has no preconditions")]
         let uid = unsafe { libc::getuid() };
+        #[expect(unsafe_code, reason = "libc::getgid has no preconditions")]
         let gid = unsafe { libc::getgid() };
         let time = util::amiga_to_systime(rb.creation_day, rb.creation_minute, rb.creation_tick);
 

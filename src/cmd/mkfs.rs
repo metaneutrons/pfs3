@@ -38,7 +38,7 @@ pub fn run(
     }
 
     println!("Formatting {} as PFS3...", image.display());
-    println!("  Volume name: {}", name);
+    println!("  Volume name: {name}");
     println!(
         "  Total blocks: {} ({} bytes)",
         total_blocks,

@@ -1,17 +1,35 @@
 [package]
 name = "libpfs3"
 version = "0.1.3"
-edition = "2024"
-license = "LGPL-3.0-or-later"
-description = "Pure Rust PFS3 (Amiga) filesystem library — read, write, format, and check"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 readme = "README.md"
-repository = "https://github.com/metaneutrons/pfs3"
+description = "Pure Rust PFS3 (Amiga) filesystem library — read, write, format, and check"
 keywords = ["amiga", "pfs3", "filesystem", "retro", "fuse"]
 categories = ["filesystem", "parser-implementations"]
+# Published to crates.io, so consumers need a documented lower bound, and the
+# CI job `msrv` runs the full test suite against exactly this version.
+#
+# Measured on 6 September 2026: the library itself compiles from 1.88, because
+# it uses let-chains. The bound is set higher on purpose. The dev dependency
+# sevenz-rust2 requires 1.93, so below 1.94 no test target resolves at all and
+# the job could only compile the library. At this value the guarantee is the
+# stronger one: everything the test suite covers is covered at the MSRV too.
+#
+# The README claimed 1.85 until 6 September 2026, which was never true.
+rust-version = "1.94.1"
+
+[lints]
+workspace = true
 
 [dependencies]
 byteorder = "1"
 thiserror = "2"
 
 [dev-dependencies]
-sevenz-rust = "0.6"
+# sevenz-rust is unmaintained and RUSTSEC-2026-0245 (path traversal on
+# extract) has no patched version. sevenz-rust2 is the maintained fork.
+sevenz-rust2 = "0.22"

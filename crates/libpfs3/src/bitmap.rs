@@ -6,7 +6,7 @@
 use crate::cache::BlockCache;
 use crate::error::Result;
 use crate::io::BlockDevice;
-use crate::ondisk::*;
+use crate::ondisk::{BITMAP_BLOCK_HEADER_SIZE, INDEX_BLOCK_HEADER_SIZE, Rootblock};
 
 /// Bitmap index reader — resolves bitmap block sequence numbers.
 pub struct BitmapReader {

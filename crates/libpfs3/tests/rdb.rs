@@ -12,7 +12,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(16000);
 
 fn temp_path() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("pfs3_rdb_{}.img", n))
+    std::env::temp_dir().join(format!("pfs3_rdb_{}_{n}.img", std::process::id()))
 }
 
 fn put_be32(buf: &mut [u8], off: usize, val: u32) {
@@ -22,7 +22,7 @@ fn put_be32(buf: &mut [u8], off: usize, val: u32) {
 #[test]
 fn no_rdb_signature_returns_empty() {
     let path = temp_path();
-    std::fs::write(&path, &vec![0u8; 32768]).unwrap();
+    std::fs::write(&path, vec![0u8; 32768]).unwrap();
     let parts = rdb::detect_pfs3_partitions(&path).unwrap();
     assert!(parts.is_empty());
     std::fs::remove_file(&path).ok();

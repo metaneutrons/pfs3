@@ -1,13 +1,98 @@
 [package]
 name = "pfs3-fuse"
 version = "0.1.3"
-edition = "2024"
-license = "LGPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
 description = "FUSE driver for PFS3 (Amiga) disk images"
+# Shipped as a binary through GitHub releases, AUR and .deb. Only libpfs3 goes
+# to crates.io.
+publish = false
+
+# This crate deliberately does NOT inherit `[workspace.lints]`. The workspace
+# forbids `unsafe_code`, and `forbid` cannot be relaxed by a member. Reading
+# the process uid and gid needs two libc calls, so the exception is limited to
+# this one crate and lowered to `deny`, which the two documented call sites in
+# `types.rs` then override individually. Everything else matches the workspace
+# block; keep the two in step when the workspace block changes.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Exceptions from pedantic and nursery. Each one is a decision, not a blanket
+# quieting: everything not listed here is enforced, so new code gets checked.
+#
+# The four cast lints are the domain. PFS3 is an on-disk format of fixed-width
+# big-endian fields, and the code converts between those widths and host-sized
+# indices on almost every line. The widths come from the format and are range
+# checked when a block is parsed, so the lints fire on the correct conversions
+# rather than on suspect ones.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+
+# Documentation backlog rather than a judgement that the docs do not matter.
+# libpfs3 is published to crates.io and these belong there eventually; 166
+# missing sections are their own piece of work, not part of a hygiene pass.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# Fires on every accessor of a filesystem structure and would add `#[must_use]`
+# to well over seventy of them without making a single misuse harder.
+must_use_candidate = "allow"
+
+# The domain vocabulary is full of bare identifiers that are not code: PFS3,
+# AmigaOS, SUPERINDEX, RDB, Trashcan. Backticking them in prose reads worse.
+doc_markdown = "allow"
+
+# The literals this fires on are on-disk magic numbers and Unix modes:
+# 0x50465303 is the PFS3 DosType, 0x444F5301 is DOS\1, 0o100000 is S_IFREG.
+# Grouping them into triples breaks exactly the structure that makes them
+# readable. Where a long decimal genuinely benefits, the code uses separators.
+unreadable_literal = "allow"
+
+# const-ness is part of the public API of a published crate. Adopting it
+# wherever the compiler currently permits it commits the library to keeping it.
+missing_const_for_fn = "allow"
+
+# Nursery lints whose suggestions here are either wrong or a wash.
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+
+# Structural style on code that mirrors the on-disk layout. The long functions
+# are the block parsers and the formatter, where splitting hides the sequence
+# the format prescribes; the name collisions are pairs like `anode`/`anode_nr`
+# that the format itself names that way.
+too_many_lines = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+unused_self = "allow"
+needless_pass_by_value = "allow"
+unnecessary_wraps = "allow"
+
+# A cargo-group lint about the dependency graph rather than about this code.
+# fuser pulls in a second major of a few transitive crates; cargo resolves both
+# and nothing here can change it short of a dependency change of its own.
+multiple_crate_versions = "allow"
 
 [dependencies]
 libpfs3 = { path = "../libpfs3" }
-fuser = "0.15"
+# fuser 0.16 changed its default features from ["libfuse"] to [], so a bare
+# version bump would silently drop libfuse3 on Linux for the pure-Rust mount
+# implementation and break the macOS build outright, since that
+# implementation only exists on Linux. The feature is therefore named
+# explicitly, which keeps the behaviour 0.15 had and the .deb dependency on
+# libfuse3-3 accurate.
+fuser = { version = "0.16", features = ["libfuse"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 log = "0.4"
@@ -19,4 +104,6 @@ section = "utils"
 depends = "libfuse3-3"
 assets = [
   ["target/release/pfs3-fuse", "usr/bin/", "755"],
+  ["README.md", "usr/share/doc/pfs3-fuse/", "644"],
+  ["LICENSE", "usr/share/doc/pfs3-fuse/", "644"],
 ]

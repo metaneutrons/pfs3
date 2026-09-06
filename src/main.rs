@@ -233,13 +233,13 @@ fn main() -> Result<()> {
         Commands::Mkdir { img, path } => {
             let mut w = img.open_writer()?;
             w.create_dir(&path)?;
-            println!("Created directory: {}", path);
+            println!("Created directory: {path}");
             Ok(())
         }
         Commands::Rm { img, path } => {
             let mut w = img.open_writer()?;
             w.delete(&path)?;
-            println!("Removed: {}", path);
+            println!("Removed: {path}");
             Ok(())
         }
         Commands::Protect { img, path, bits } => {

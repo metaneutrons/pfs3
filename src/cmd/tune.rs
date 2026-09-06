@@ -6,6 +6,6 @@ pub fn run_writer(w: &mut Writer, name: Option<&str>) -> Result<()> {
         bail!("Nothing to change. Use --name to set volume name.");
     };
     w.set_volume_name(new_name)?;
-    println!("Volume name set to: {}", new_name);
+    println!("Volume name set to: {new_name}");
     Ok(())
 }

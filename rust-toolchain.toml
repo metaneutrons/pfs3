@@ -1,0 +1,7 @@
+# The only source of the Rust version: locally, in CI and in the release build.
+# Do not add a second one through dtolnay/rust-toolchain in a workflow.
+# Dependabot keeps this current through package-ecosystem: rust-toolchain.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -16,7 +16,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(14000);
 
 fn fresh_image(blocks: u64) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pfs3_stress_{}.img", n));
+    let path = std::env::temp_dir().join(format!("pfs3_stress_{}_{n}.img", std::process::id()));
     let dev = FileBlockDevice::create(&path, 512, blocks).unwrap();
     let opts = FormatOptions {
         volume_name: "Stress".into(),
@@ -42,11 +42,8 @@ fn many_files_in_root() {
     let path = fresh_image(32768);
     let mut w = open_writer(&path);
     for i in 0..100 {
-        w.write_file(
-            &format!("file_{:04}.txt", i),
-            format!("data {}", i).as_bytes(),
-        )
-        .unwrap();
+        w.write_file(&format!("file_{i:04}.txt"), format!("data {i}").as_bytes())
+            .unwrap();
     }
     drop(w);
     let mut vol = reopen(&path);
@@ -64,7 +61,7 @@ fn many_files_in_subdirectory() {
     w.create_dir("Bulk").unwrap();
     for i in 0..50 {
         w.write_file(
-            &format!("Bulk/item_{:03}.dat", i),
+            &format!("Bulk/item_{i:03}.dat"),
             &vec![(i & 0xFF) as u8; 256],
         )
         .unwrap();
@@ -82,13 +79,13 @@ fn deep_directory_nesting() {
     let mut current = String::new();
     for i in 0..20 {
         current = if current.is_empty() {
-            format!("d{}", i)
+            format!("d{i}")
         } else {
-            format!("{}/d{}", current, i)
+            format!("{current}/d{i}")
         };
         w.create_dir(&current).unwrap();
     }
-    let deepfile = format!("{}/deep.txt", current);
+    let deepfile = format!("{current}/deep.txt");
     w.write_file(&deepfile, b"bottom").unwrap();
     drop(w);
     let mut vol = reopen(&path);
@@ -102,16 +99,14 @@ fn repeated_create_delete_cycles() {
     let mut w = open_writer(&path);
     let initial_free = w.vol.free_blocks();
     for cycle in 0..20 {
-        let name = format!("cycle_{}.txt", cycle);
+        let name = format!("cycle_{cycle}.txt");
         w.write_file(&name, &vec![cycle as u8; 512]).unwrap();
         w.delete(&name).unwrap();
     }
     let final_free = w.vol.free_blocks();
     assert!(
         final_free >= initial_free - 2,
-        "leaked blocks: initial={}, final={}",
-        initial_free,
-        final_free
+        "leaked blocks: initial={initial_free}, final={final_free}"
     );
     std::fs::remove_file(&path).ok();
 }
@@ -138,14 +133,13 @@ fn interleaved_create_and_delete() {
     let path = fresh_image(8192);
     let mut w = open_writer(&path);
     for i in 0..20 {
-        w.write_file(&format!("f{}.txt", i), &vec![i as u8; 128])
-            .unwrap();
+        w.write_file(&format!("f{i}.txt"), &[i as u8; 128]).unwrap();
     }
     for i in (0..20).step_by(2) {
-        w.delete(&format!("f{}.txt", i)).unwrap();
+        w.delete(&format!("f{i}.txt")).unwrap();
     }
     for i in 0..10 {
-        w.write_file(&format!("new{}.txt", i), &vec![(i + 100) as u8; 256])
+        w.write_file(&format!("new{i}.txt"), &vec![(i + 100) as u8; 256])
             .unwrap();
     }
     drop(w);
@@ -154,7 +148,7 @@ fn interleaved_create_and_delete() {
     assert_eq!(entries.len(), 20);
     for i in (1..20).step_by(2) {
         assert_eq!(
-            vol.read_file(&format!("f{}.txt", i)).unwrap(),
+            vol.read_file(&format!("f{i}.txt")).unwrap(),
             vec![i as u8; 128]
         );
     }
@@ -166,7 +160,7 @@ fn large_file_multi_extent() {
     let path = fresh_image(512);
     let mut w = open_writer(&path);
     for i in 0..5 {
-        w.write_file(&format!("frag{}.txt", i), &vec![i as u8; 512])
+        w.write_file(&format!("frag{i}.txt"), &vec![i as u8; 512])
             .unwrap();
     }
     w.delete("frag1.txt").unwrap();
@@ -186,7 +180,7 @@ fn fill_and_empty_disk() {
     let initial_free = w.vol.free_blocks();
     let mut written = Vec::new();
     for i in 0..500 {
-        let name = format!("fill_{}.txt", i);
+        let name = format!("fill_{i}.txt");
         if w.write_file(&name, &vec![0u8; 512]).is_ok() {
             written.push(name);
         } else {
@@ -197,9 +191,7 @@ fn fill_and_empty_disk() {
     let free_after_fill = w.vol.free_blocks();
     assert!(
         free_after_fill < initial_free,
-        "should have used some blocks: initial={}, after={}",
-        initial_free,
-        free_after_fill
+        "should have used some blocks: initial={initial_free}, after={free_after_fill}"
     );
     for name in &written {
         w.delete(name).unwrap();
@@ -207,9 +199,7 @@ fn fill_and_empty_disk() {
     let final_free = w.vol.free_blocks();
     assert!(
         final_free >= initial_free - 2,
-        "leaked: initial={}, final={}",
-        initial_free,
-        final_free
+        "leaked: initial={initial_free}, final={final_free}"
     );
     std::fs::remove_file(&path).ok();
 }
@@ -220,7 +210,7 @@ fn dir_block_overflow_many_entries() {
     let mut w = open_writer(&path);
     let count = 45;
     for i in 0..count {
-        w.write_file(&format!("f{:03}.txt", i), &[i as u8; 4])
+        w.write_file(&format!("f{i:03}.txt"), &[i as u8; 4])
             .unwrap();
     }
     drop(w);
@@ -228,7 +218,7 @@ fn dir_block_overflow_many_entries() {
     let entries = vol.list_dir("/").unwrap();
     assert_eq!(entries.len(), count);
     for i in 0..count {
-        let data = vol.read_file(&format!("f{:03}.txt", i)).unwrap();
+        let data = vol.read_file(&format!("f{i:03}.txt")).unwrap();
         assert_eq!(data, vec![i as u8; 4]);
     }
     std::fs::remove_file(&path).ok();
@@ -239,11 +229,11 @@ fn multiple_dir_blocks_with_delete() {
     let path = fresh_image(8192);
     let mut w = open_writer(&path);
     for i in 0..50 {
-        w.write_file(&format!("item{:03}.dat", i), &[i as u8; 8])
+        w.write_file(&format!("item{i:03}.dat"), &[i as u8; 8])
             .unwrap();
     }
     for i in (10..30).rev() {
-        w.delete(&format!("item{:03}.dat", i)).unwrap();
+        w.delete(&format!("item{i:03}.dat")).unwrap();
     }
     drop(w);
     let mut vol = reopen(&path);
@@ -256,12 +246,12 @@ fn multiple_dir_blocks_with_delete() {
 fn large_file_uses_multiple_extents() {
     let path = fresh_image(4096);
     let mut w = open_writer(&path);
-    let data: Vec<u8> = (0..102400).map(|i| (i % 256) as u8).collect();
+    let data: Vec<u8> = (0..102_400).map(|i| (i % 256) as u8).collect();
     w.write_file("large.bin", &data).unwrap();
     drop(w);
     let mut vol = reopen(&path);
     let entry = vol.lookup("large.bin").unwrap().unwrap();
-    assert_eq!(entry.file_size(), 102400);
+    assert_eq!(entry.file_size(), 102_400);
     let chain = vol.validate_anode_chain(entry.anode).unwrap();
     assert!(chain.len() >= 200);
     let read_data = vol.read_file("large.bin").unwrap();
@@ -279,7 +269,7 @@ fn many_directories_exhaust_reserved_gracefully() {
     let mut w = open_writer(&path);
     let mut created = 0;
     for i in 0..200 {
-        if w.create_dir(&format!("dir{:04}", i)).is_ok() {
+        if w.create_dir(&format!("dir{i:04}")).is_ok() {
             created += 1;
         } else {
             break;
@@ -299,8 +289,8 @@ fn reserved_exhaustion_returns_disk_full() {
     let mut w = open_writer(&path);
     let mut last_err = None;
     for i in 0..100 {
-        match w.create_dir(&format!("d{}", i)) {
-            Ok(_) => {}
+        match w.create_dir(&format!("d{i}")) {
+            Ok(()) => {}
             Err(e) => {
                 last_err = Some(e);
                 break;
@@ -308,11 +298,10 @@ fn reserved_exhaustion_returns_disk_full() {
         }
     }
     if let Some(e) = last_err {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         assert!(
             msg.contains("full") || msg.contains("not enough") || msg.contains("no free"),
-            "unexpected error: {}",
-            msg
+            "unexpected error: {msg}"
         );
     }
     std::fs::remove_file(&path).ok();

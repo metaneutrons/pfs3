@@ -15,7 +15,10 @@ use std::collections::HashSet;
 use crate::cache::BlockCache;
 use crate::error::{Error, Result};
 use crate::io::BlockDevice;
-use crate::ondisk::*;
+use crate::ondisk::{
+    ANODE_BLOCK_HEADER_SIZE, ANODE_EOF, ANODE_SIZE, Anode, AnodeBlockHeader,
+    INDEX_BLOCK_HEADER_SIZE, Rootblock, RootblockExt,
+};
 
 /// Reads anode (extent) records from the reserved area.
 pub struct AnodeReader {
@@ -87,7 +90,7 @@ impl AnodeReader {
         let mut nr = anodenr;
         while nr != ANODE_EOF {
             if !seen.insert(nr) {
-                return Err(Error::InvalidPartition(format!("anode cycle at {}", nr)));
+                return Err(Error::InvalidPartition(format!("anode cycle at {nr}")));
             }
             if chain.len() >= MAX_CHAIN_LEN {
                 return Err(Error::InvalidPartition("anode chain too long".into()));

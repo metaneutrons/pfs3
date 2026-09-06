@@ -16,7 +16,7 @@ pub fn undelete(w: &mut Writer, name: &str, dest: Option<&str>) -> Result<()> {
         entries
             .iter()
             .position(|e| e.filename.eq_ignore_ascii_case(name))
-            .ok_or_else(|| anyhow::anyhow!("'{}' not found in deldir", name))?
+            .ok_or_else(|| anyhow::anyhow!("'{name}' not found in deldir"))?
     };
 
     let entry = &entries[idx];

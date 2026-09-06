@@ -25,8 +25,21 @@ fn open_pfs() -> Volume {
         if !hdf.exists() {
             let archive = fixtures_dir().join("pfs.7z");
             assert!(archive.exists(), "pfs.7z fixture missing");
-            sevenz_rust::decompress_file(&archive, &fixtures_dir())
-                .expect("failed to extract pfs.7z");
+            // `Once` is per process, and under `cargo nextest` every test gets
+            // a process of its own. Several of them therefore reach this point
+            // at the same time on a fresh checkout. Extract into a
+            // process-private directory and move the result into place: a
+            // rename within one filesystem is atomic, so a concurrent reader
+            // sees either no file or a complete one, never a half-written one.
+            let staging = fixtures_dir().join(format!(".extract-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&staging);
+            std::fs::create_dir_all(&staging).expect("failed to create the staging directory");
+            sevenz_rust2::decompress_file(&archive, &staging).expect("failed to extract pfs.7z");
+            // A failing rename means another process won the race, which is
+            // fine. What must hold afterwards is that the file is there.
+            let _ = std::fs::rename(staging.join("pfs.hdf"), &hdf);
+            let _ = std::fs::remove_dir_all(&staging);
+            assert!(hdf.exists(), "pfs.hdf missing after extraction");
         }
     });
     Volume::open_rdb(&hdf).unwrap()
@@ -214,7 +227,7 @@ macro_rules! tests_for_image {
                 let entries = vol.list_dir("/").unwrap();
                 let file = entries.iter().find(|e| e.is_file()).unwrap();
                 let blocks = vol.validate_anode_chain(file.anode).unwrap();
-                let expected = (file.file_size() + 511) / 512;
+                let expected = file.file_size().div_ceil(512);
                 assert_eq!(blocks.len() as u64, expected);
             }
 

@@ -1,3 +1,0 @@
-#!/bin/sh
-cargo fmt --all -- --check || { echo "fmt failed"; exit 1; }
-cargo clippy --all-targets -- -D warnings || { echo "clippy failed"; exit 1; }

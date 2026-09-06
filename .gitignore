@@ -1,10 +1,39 @@
-/target
+# Patterns deliberately UNANCHORED, so that they bite at every level.
+# A leading slash would no longer match in a new subproject.
+
+target/
+**/*.rs.bk
+*.pdb
+
+# Coverage
+lcov.info
+coverage/
+*.profraw
 
 # Disk images (large binaries)
 *.hdf
 !crates/libpfs3/tests/fixtures/small.hdf
 
 # Fuzz corpus and artifacts (regenerated locally)
-crates/libpfs3/fuzz/target/
-crates/libpfs3/fuzz/corpus/
-crates/libpfs3/fuzz/artifacts/
+corpus/
+artifacts/
+
+# Node, in case a subproject appears somewhere
+node_modules/
+dist/
+.pnpm-store/
+
+# Environment and state
+.env
+.env.*
+!.env.example
+*.log
+
+# Editor and operating system
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

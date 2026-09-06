@@ -25,10 +25,7 @@ pub fn amiga_date_string(days: u16, minutes: u16, ticks: u16) -> String {
             let mins = (time_of_day % 3600) / 60;
             let s = time_of_day % 60;
             let (y, m, d) = days_to_ymd((secs / 86400) as u32);
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                y, m, d, hours, mins, s
-            )
+            format!("{y:04}-{m:02}-{d:02} {hours:02}:{mins:02}:{s:02}")
         }
         Err(_) => "invalid".into(),
     }
@@ -37,10 +34,10 @@ pub fn amiga_date_string(days: u16, minutes: u16, ticks: u16) -> String {
 /// Convert days since Unix epoch (1970-01-01) to (year, month, day).
 fn days_to_ymd(days: u32) -> (u32, u32, u32) {
     // Civil calendar algorithm from Howard Hinnant
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
@@ -175,8 +172,8 @@ pub fn current_amiga_datestamp() -> (u16, u16, u16) {
 /// Join a parent path and a filename with a single '/'.
 pub fn join_pfs3_path(parent: &str, name: &str) -> String {
     if parent.ends_with('/') {
-        format!("{}{}", parent, name)
+        format!("{parent}{name}")
     } else {
-        format!("{}/{}", parent, name)
+        format!("{parent}/{name}")
     }
 }

@@ -68,7 +68,7 @@ cargo install --path .
 cargo install --path crates/pfs3-fuse
 ```
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.94.1+ (edition 2024).
 
 ## CLI Usage
 
@@ -253,7 +253,9 @@ pfs3/
 │   │   │   ├── error.rs        — Error types
 │   │   │   └── util.rs         — Datestamp, charset, protection bit conversion
 │   │   └── tests/
-│   │       ├── integration.rs  — 76+ tests against real PFS3 images
+│   │       ├── read.rs, write.rs, format.rs, rdb.rs
+│   │       ├── deldir.rs, corrupt.rs, fault.rs, stress.rs
+│   │       ├── fixtures.rs     — image openers and the shared test macro
 │   │       └── fixtures/
 │   │           ├── small.hdf   — Generated test image (320KB)
 │   │           └── pfs.7z      — Real PFS3 image from AmiFUSE (8MB)

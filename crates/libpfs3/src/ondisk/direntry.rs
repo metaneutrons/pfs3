@@ -1,6 +1,6 @@
 //! Directory block headers and directory entry parsing.
 
-use super::*;
+use super::{DBLKID, ST_LINKDIR, ST_LINKFILE, ST_ROLLOVERFILE, ST_SOFTLINK, ST_USERDIR};
 use crate::error::{Error, Result};
 
 /// Directory block header (0x14 bytes).

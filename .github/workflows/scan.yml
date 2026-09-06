@@ -1,0 +1,34 @@
+# The scheduled security scan lives in a file of its own, deliberately.
+#
+# GitHub disables a scheduled workflow in a public repository after 60 days
+# without a commit, and it disables the whole FILE, not just the cron trigger.
+# While the schedule sat in ci.yml, that took push and pull_request with it:
+# this repository ran without any CI from July to September 2026 and nothing
+# turned red. Keeping the cron separate means the worst case is a dead scan.
+name: Scheduled scan
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisories:
+    name: Advisories and licences
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show
+      - uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+        with:
+          tool: cargo-deny
+      # Runs against the current advisory database rather than the one that
+      # existed when the last commit landed. That is the whole point of the
+      # schedule: a new advisory against an unchanged lockfile.
+      - run: cargo deny check
