@@ -76,4 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$TAG"
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          # release.yml declares `tag` as a required input, so --ref alone is
+          # not enough: GitHub answers 422 before a run exists. The five manual
+          # qualification dispatches passed it and therefore never showed this.
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
