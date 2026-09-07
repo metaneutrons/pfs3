@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/metaneutrons/pfs3/compare/v0.1.3...v0.1.4) (2026-09-07)
+
+
+### Bug Fixes
+
+* **release:** keep the component out of the tag name ([#16](https://github.com/metaneutrons/pfs3/issues/16)) ([ebb5abc](https://github.com/metaneutrons/pfs3/commit/ebb5abcbf400f5a2633deb5ee6853e855a389ece))
+
 ## [0.1.3](https://github.com/metaneutrons/pfs3/compare/v0.1.2...v0.1.3) (2026-05-01)
 
 
