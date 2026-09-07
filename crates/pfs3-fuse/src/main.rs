@@ -14,9 +14,12 @@ use fuser::{
     ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, Request, SessionACL, WriteFlags,
 };
 
-// fuser 0.18 carries its own errno constants and resolves the platform
-// differences that this file used to hand-roll: ENODATA is ENOATTR on macOS,
-// and ENOTSUP is not in the libc crate everywhere.
+// fuser 0.18 carries its own errno constants. Two of them matter here.
+// ENOTSUP exists on every platform, which the libc crate does not guarantee.
+// ENODATA does NOT: it is Linux-only, and the portable spelling for "this
+// xattr does not exist" is NO_XATTR, which resolves to ENODATA on Linux and
+// ENOATTR elsewhere. Using ENODATA directly compiles on Linux and breaks the
+// macOS build, which is how this was found.
 use fuser::Errno as E;
 
 use libpfs3::ondisk::ANODE_ROOTDIR;
@@ -726,7 +729,7 @@ impl Filesystem for Pfs3Fs {
         let ino = ino.0;
         // Root and virtual .Trashcan have no dir entries, so no protection bits
         if ino == FUSE_ROOT_INO || ino == TRASHCAN_INO {
-            reply.error(E::ENODATA);
+            reply.error(E::NO_XATTR);
             return;
         }
         let Some(name_str) = name.to_str() else {
@@ -734,7 +737,7 @@ impl Filesystem for Pfs3Fs {
             return;
         };
         if name_str != "user.amiga.protection" {
-            reply.error(E::ENODATA);
+            reply.error(E::NO_XATTR);
             return;
         }
         let inner = self.inner.lock().unwrap();
