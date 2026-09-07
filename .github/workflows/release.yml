@@ -432,7 +432,6 @@ jobs:
           class Pfs3 < Formula
             desc "PFS3 (Amiga Professional File System III) tools"
             homepage "https://github.com/${REPO}"
-            version "${VERSION}"
             license "LGPL-3.0-or-later"
 
             on_macos do
@@ -465,9 +464,18 @@ jobs:
           end
           EOF
           ruby -c meta/pfs3.rb
+          # No `version` line: brew scans the version out of the URL and
+          # `brew audit` rejects the field as redundant. The old formula carried
+          # it and was never audited, because it was pushed straight into the
+          # tap instead of going through a pull request.
+          if grep -Eq '^ *version "' meta/pfs3.rb; then
+            echo "::error::the formula carries a redundant version field"; exit 1
+          fi
           # Exactly four download URLs, all of the CURRENT tag.
           test "$(grep -c "${base}/" meta/pfs3.rb)" -eq 4
           test "$(grep -c 'url "https' meta/pfs3.rb)" -eq 4
+          # The version brew will scan has to be the release core.
+          grep -Fq "/${TAG}/pfs3-${VERSION}-" meta/pfs3.rb
 
           # The source archive GitHub serves unpacks into a directory derived
           # from the FULL tag, while pkgver carries the release core. Neither
