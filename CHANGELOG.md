@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/metaneutrons/pfs3/compare/v0.1.5...v0.1.6) (2026-09-07)
+
+
+### Bug Fixes
+
+* **pfs3-fuse:** port the driver to fuser 0.18 ([#21](https://github.com/metaneutrons/pfs3/issues/21)) ([35bbdf0](https://github.com/metaneutrons/pfs3/commit/35bbdf09b86a9e40cffbf765ba2eadb0d6b793ee))
+
 ## [0.1.5](https://github.com/metaneutrons/pfs3/compare/v0.1.4...v0.1.5) (2026-09-07)
 
 
