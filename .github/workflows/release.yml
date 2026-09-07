@@ -1021,6 +1021,13 @@ jobs:
           set -euo pipefail
           # The assets are not touched here.
           gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest
-          gh release view "$TAG" --repo "$REPO" --json isPrerelease,isLatest \
-            --jq '"prerelease=\(.isPrerelease) latest=\(.isLatest)"'
-          test "$(gh api "repos/${REPO}/releases/latest" --jq .tag_name)" = "$TAG"
+          # Read back through the API, not through `gh release view --json`:
+          # that command has no `isLatest` field, and asking for one makes gh
+          # exit non-zero. The promote for v0.1.5 succeeded and the step went
+          # red on exactly that, which is the worst kind of false alarm here.
+          state=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '"draft=\(.draft) prerelease=\(.prerelease)"')
+          echo "$state"
+          test "$state" = "draft=false prerelease=false"
+          latest=$(gh api "repos/${REPO}/releases/latest" --jq .tag_name)
+          echo "releases/latest=$latest"
+          test "$latest" = "$TAG"
