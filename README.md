@@ -166,7 +166,7 @@ Mount any PFS3 image as a native filesystem:
 
 ```bash
 mkdir -p /tmp/pfs3
-pfs3-fuse disk.hdf /tmp/pfs3 --auto-unmount
+pfs3-fuse disk.hdf /tmp/pfs3
 
 # Use it like any filesystem
 ls /tmp/pfs3/
@@ -176,10 +176,15 @@ cp /tmp/pfs3/C/Dir ~/amiga-dir
 umount /tmp/pfs3
 ```
 
+`--auto-unmount` unmounts when the process exits. It needs an access mode wider
+than owner-only, because `fusermount` performs the unmount, so most systems
+require `user_allow_other` in `/etc/fuse.conf` for it. Without that line the
+mount is refused with a message naming the reason.
+
 ### Read-write mode (experimental)
 
 ```bash
-pfs3-fuse disk.hdf /tmp/pfs3 --auto-unmount --write
+pfs3-fuse disk.hdf /tmp/pfs3 --write
 
 echo "hello" > /tmp/pfs3/test.txt
 mkdir /tmp/pfs3/NewDir
@@ -272,6 +277,8 @@ pfs3/
 │       ├── check.rs, mkfs.rs, write.rs
 │       ├── protect.rs, tune.rs
 │       └── mod.rs
+├── scripts/
+│   └── smoke-fuse.sh         — mounts an image and checks the driver against the CLI
 ├── Cargo.toml
 └── LICENSE                   — LGPL-3.0-or-later
 ```

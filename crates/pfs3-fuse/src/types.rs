@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use fuser::{FileAttr, FileType};
+use fuser::{FileAttr, FileType, INodeNo};
 
 use libpfs3::ondisk::{ANODE_ROOTDIR, DirEntry, MODE_DELDIR};
 use libpfs3::util;
@@ -109,7 +109,7 @@ pub fn rebuild_deldir(inner: &mut FsInner) {
 pub fn trashcan_attr(uid: u32, gid: u32) -> FileAttr {
     use std::time::SystemTime;
     FileAttr {
-        ino: TRASHCAN_INO,
+        ino: INodeNo(TRASHCAN_INO),
         size: 0,
         blocks: 0,
         atime: SystemTime::UNIX_EPOCH,
@@ -160,7 +160,7 @@ pub fn make_attr(
         ino,
         InodeInfo {
             attr: FileAttr {
-                ino,
+                ino: INodeNo(ino),
                 size,
                 blocks: size.div_ceil(bs as u64),
                 atime: time,
@@ -209,7 +209,7 @@ impl Pfs3Fs {
         let time = util::amiga_to_systime(rb.creation_day, rb.creation_minute, rb.creation_tick);
 
         let root_attr = FileAttr {
-            ino: FUSE_ROOT_INO,
+            ino: INodeNo(FUSE_ROOT_INO),
             size: 0,
             blocks: 0,
             atime: time,

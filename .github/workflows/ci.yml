@@ -143,6 +143,27 @@ jobs:
         run: brew install macfuse
       - run: cargo build --locked --release -p pfs3-fuse
 
+  # The FUSE driver has no unit tests, so build-fuse only proves it links.
+  # This mounts a real image and requires the driver and the CLI to agree,
+  # in both directions. Linux only: it needs /dev/fuse, which the ubuntu
+  # runners provide and the macOS ones do not.
+  smoke-fuse:
+    name: FUSE mount smoke test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install libfuse3 and fusermount3
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev fuse3
+      # Built immediately before the test on purpose: the script runs prebuilt
+      # binaries, so a stale one would let it check the wrong thing.
+      - run: cargo build --locked --release -p pfs3 -p pfs3-fuse
+      - run: scripts/smoke-fuse.sh
+
   commit-hygiene:
     name: Commit hygiene
     if: github.event_name == 'pull_request'
@@ -223,7 +244,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [quality, test, msrv, build-fuse, secrets, commit-hygiene]
+    needs: [quality, test, msrv, build-fuse, smoke-fuse, secrets, commit-hygiene]
     runs-on: ubuntu-24.04
     steps:
       # "skipped" has to be permitted, otherwise the aggregate job fails on a
