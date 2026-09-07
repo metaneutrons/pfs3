@@ -92,7 +92,7 @@ libpfs3 = { path = "../libpfs3" }
 # implementation only exists on Linux. The feature is therefore named
 # explicitly, which keeps the behaviour 0.15 had and the .deb dependency on
 # libfuse3-3 accurate.
-fuser = { version = "0.16", features = ["libfuse"] }
+fuser = { version = "0.18", features = ["libfuse3"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 log = "0.4"

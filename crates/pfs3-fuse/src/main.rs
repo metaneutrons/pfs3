@@ -9,19 +9,18 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyStatfs, Request,
+    BsdFileFlags, Config, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation,
+    INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyData, ReplyDirectory,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, Request, SessionACL, WriteFlags,
 };
-use libc::{EIO, EISDIR, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 
-// ENODATA: Linux uses 61, macOS doesn't define it but ENOATTR (93) serves the same purpose.
-#[cfg(target_os = "linux")]
-const ENODATA: i32 = libc::ENODATA;
-#[cfg(not(target_os = "linux"))]
-const ENODATA: i32 = 93; // ENOATTR on macOS/BSD
-
-// ENOTSUP: not in libc crate on all platforms
-const ENOTSUP: i32 = 95;
+// fuser 0.18 carries its own errno constants. Two of them matter here.
+// ENOTSUP exists on every platform, which the libc crate does not guarantee.
+// ENODATA does NOT: it is Linux-only, and the portable spelling for "this
+// xattr does not exist" is NO_XATTR, which resolves to ENODATA on Linux and
+// ENOATTR elsewhere. Using ENODATA directly compiles on Linux and breaks the
+// macOS build, which is how this was found.
+use fuser::Errno as E;
 
 use libpfs3::ondisk::ANODE_ROOTDIR;
 use libpfs3::util;
@@ -42,6 +41,8 @@ struct Args {
     mountpoint: PathBuf,
     #[arg(long, default_value = "0")]
     offset: u64,
+    /// Unmount automatically when the process exits. Needs an ACL wider than
+    /// owner-only, so most systems require `user_allow_other` in /etc/fuse.conf.
     #[arg(long)]
     auto_unmount: bool,
     /// Enable EXPERIMENTAL read-write mode (risk of data corruption!)
@@ -50,7 +51,8 @@ struct Args {
 }
 
 impl Filesystem for Pfs3Fs {
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        let ino = ino.0;
         let inner = self.inner.lock().unwrap();
         if ino == TRASHCAN_INO && has_deldir(&inner) {
             reply.attr(&TTL, &trashcan_attr(self.uid, self.gid));
@@ -58,15 +60,16 @@ impl Filesystem for Pfs3Fs {
         }
         match inner.inodes.get(&ino) {
             Some(info) => reply.attr(&TTL, &info.attr),
-            None => reply.error(ENOENT),
+            None => reply.error(E::ENOENT),
         }
     }
 
-    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        let parent = parent.0;
         let name_str = if let Some(s) = name.to_str() {
             s.to_string()
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
@@ -74,7 +77,7 @@ impl Filesystem for Pfs3Fs {
         // Virtual .Trashcan directory
         if parent == FUSE_ROOT_INO && name_str == ".Trashcan" && has_deldir(&inner) {
             let attr = trashcan_attr(self.uid, self.gid);
-            reply.entry(&TTL, &attr, 0);
+            reply.entry(&TTL, &attr, Generation(0));
             return;
         }
 
@@ -91,7 +94,7 @@ impl Filesystem for Pfs3Fs {
                 let de_time = de.time;
                 let de_display_name = de.display_name.clone();
                 let attr = FileAttr {
-                    ino: de_ino,
+                    ino: INodeNo(de_ino),
                     size: de_size,
                     blocks: de_size.div_ceil(512),
                     atime: de_time,
@@ -118,9 +121,9 @@ impl Filesystem for Pfs3Fs {
                     },
                 );
                 inner.name_cache.insert((parent, name_str), de_ino);
-                reply.entry(&TTL, &attr, 0);
+                reply.entry(&TTL, &attr, Generation(0));
             } else {
-                reply.error(ENOENT);
+                reply.error(E::ENOENT);
             }
             return;
         }
@@ -128,19 +131,19 @@ impl Filesystem for Pfs3Fs {
         if let Some(&ino) = inner.name_cache.get(&(parent, name_str.clone()))
             && let Some(info) = inner.inodes.get(&ino)
         {
-            reply.entry(&TTL, &info.attr, 0);
+            reply.entry(&TTL, &info.attr, Generation(0));
             return;
         }
 
         let parent_anode = if let Some(info) = inner.inodes.get(&parent) {
             info.anode
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
 
         let Ok(entries) = inner.access.vol_mut().list_dir_by_anode(parent_anode) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
 
@@ -150,21 +153,22 @@ impl Filesystem for Pfs3Fs {
                 let attr = info.attr;
                 inner.inodes.insert(ino, info);
                 inner.name_cache.insert((parent, name_str), ino);
-                reply.entry(&TTL, &attr, 0);
+                reply.entry(&TTL, &attr, Generation(0));
                 return;
             }
         }
-        reply.error(ENOENT);
+        reply.error(E::ENOENT);
     }
 
     fn readdir(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
+        let ino = ino.0;
         let mut inner = self.inner.lock().unwrap();
 
         // Virtual .Trashcan directory listing
@@ -177,7 +181,7 @@ impl Filesystem for Pfs3Fs {
                 full.push((de.ino, FileType::RegularFile, de.display_name.clone()));
             }
             for (i, (child_ino, kind, name)) in full.iter().enumerate().skip(offset as usize) {
-                if reply.add(*child_ino, (i + 1) as i64, *kind, name) {
+                if reply.add(INodeNo(*child_ino), (i + 1) as u64, *kind, name) {
                     break;
                 }
             }
@@ -188,17 +192,17 @@ impl Filesystem for Pfs3Fs {
         let (anode, parent_ino) = match inner.inodes.get(&ino) {
             Some(info) if info.attr.kind == FileType::Directory => (info.anode, info.parent_ino),
             Some(_) => {
-                reply.error(ENOTDIR);
+                reply.error(E::ENOTDIR);
                 return;
             }
             None => {
-                reply.error(ENOENT);
+                reply.error(E::ENOENT);
                 return;
             }
         };
 
         let Ok(entries) = inner.access.vol_mut().list_dir_by_anode(anode) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
 
@@ -219,22 +223,24 @@ impl Filesystem for Pfs3Fs {
         }
 
         for (i, (child_ino, kind, name)) in full.iter().enumerate().skip(offset as usize) {
-            if reply.add(*child_ino, (i + 1) as i64, *kind, name) {
+            if reply.add(INodeNo(*child_ino), (i + 1) as u64, *kind, name) {
                 break;
             }
         }
         reply.ok();
     }
 
-    fn open(&mut self, _req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
+    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+        let ino = ino.0;
+        let flags = flags.0;
         let mut inner = self.inner.lock().unwrap();
         match inner.inodes.get(&ino) {
             Some(info) if info.attr.kind == FileType::Directory => {
-                reply.error(EISDIR);
+                reply.error(E::EISDIR);
                 return;
             }
             None => {
-                reply.error(ENOENT);
+                reply.error(E::ENOENT);
                 return;
             }
             Some(_) => {}
@@ -268,52 +274,54 @@ impl Filesystem for Pfs3Fs {
                 inner.write_bufs.insert(ino, (parent_anode, name, data));
             }
         }
-        reply.opened(0, 0);
+        reply.opened(FileHandle(0), FopenFlags::empty());
     }
 
     fn read(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
+        _flags: OpenFlags,
+        _lock: Option<LockOwner>,
         reply: ReplyData,
     ) {
+        let ino = ino.0;
         let mut inner = self.inner.lock().unwrap();
         let (anode, file_size) = if let Some(info) = inner.inodes.get(&ino) {
             (info.anode, info.attr.size)
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         match inner
             .access
             .vol_mut()
-            .read_file_range(anode, file_size, offset as u64, size)
+            .read_file_range(anode, file_size, offset, size)
         {
             Ok(data) => reply.data(&data),
-            Err(_) => reply.error(EIO),
+            Err(_) => reply.error(E::EIO),
         }
     }
 
-    fn readlink(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyData) {
+    fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
+        let ino = ino.0;
         let mut inner = self.inner.lock().unwrap();
         let (anode, size) = if let Some(info) = inner.inodes.get(&ino) {
             (info.anode, info.attr.size)
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         match inner.access.vol_mut().read_file_data(anode, size) {
             Ok(data) => reply.data(&data),
-            Err(_) => reply.error(EIO),
+            Err(_) => reply.error(E::EIO),
         }
     }
 
-    fn statfs(&mut self, _req: &Request<'_>, _ino: u64, reply: ReplyStatfs) {
+    fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
         let inner = self.inner.lock().unwrap();
         let vol = inner.access.vol();
         let rb = &vol.rootblock;
@@ -332,43 +340,44 @@ impl Filesystem for Pfs3Fs {
     // ---- Write operations ----
 
     fn mkdir(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
         _mode: u32,
         _umask: u32,
         reply: ReplyEntry,
     ) {
+        let parent = parent.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
         let parent_anode = match inner.inodes.get(&parent) {
             Some(info) if info.attr.kind == FileType::Directory => info.anode,
             _ => {
-                reply.error(ENOENT);
+                reply.error(E::ENOENT);
                 return;
             }
         };
 
         let Some(w) = inner.access.writer() else {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         };
         if w.create_dir_in(parent_anode, name_str).is_err() {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         }
 
         // Re-read directory to find the new entry
         let Ok(entries) = w.vol.list_dir_by_anode(parent_anode) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
 
@@ -377,26 +386,27 @@ impl Filesystem for Pfs3Fs {
             let attr = info.attr;
             inner.inodes.insert(ino, info);
             inner.name_cache.insert((parent, name_str.to_string()), ino);
-            reply.entry(&TTL, &attr, 0);
+            reply.entry(&TTL, &attr, Generation(0));
         } else {
-            reply.error(EIO);
+            reply.error(E::EIO);
         }
     }
 
-    fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let parent = parent.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
         let parent_anode = if let Some(info) = inner.inodes.get(&parent) {
             info.anode
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
 
@@ -409,26 +419,27 @@ impl Filesystem for Pfs3Fs {
                     rebuild_deldir(&mut inner);
                     reply.ok();
                 }
-                Err(_) => reply.error(EIO),
+                Err(_) => reply.error(E::EIO),
             },
-            None => reply.error(EPERM),
+            None => reply.error(E::EPERM),
         }
     }
 
-    fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let parent = parent.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
         let parent_anode = if let Some(info) = inner.inodes.get(&parent) {
             info.anode
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
 
@@ -440,41 +451,43 @@ impl Filesystem for Pfs3Fs {
                     }
                     reply.ok();
                 }
-                Err(_) => reply.error(ENOTEMPTY),
+                Err(_) => reply.error(E::ENOTEMPTY),
             },
-            None => reply.error(EPERM),
+            None => reply.error(E::EPERM),
         }
     }
 
     fn rename(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
-        newparent: u64,
+        newparent: INodeNo,
         newname: &OsStr,
-        _flags: u32,
+        _flags: RenameFlags,
         reply: ReplyEmpty,
     ) {
+        let parent = parent.0;
+        let newparent = newparent.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let (Some(src_name), Some(dst_name)) = (name.to_str(), newname.to_str()) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
         let src_anode = if let Some(info) = inner.inodes.get(&parent) {
             info.anode
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         let dst_anode = if let Some(info) = inner.inodes.get(&newparent) {
             info.anode
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         match inner.access.writer() {
@@ -493,26 +506,27 @@ impl Filesystem for Pfs3Fs {
                     inner.name_cache.remove(&(parent, src_name.to_string()));
                     reply.ok();
                 }
-                Err(_) => reply.error(EIO),
+                Err(_) => reply.error(E::EIO),
             },
-            None => reply.error(EPERM),
+            None => reply.error(E::EPERM),
         }
     }
 
     fn write(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: fuser::ReplyWrite,
     ) {
+        let ino = ino.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let mut inner = self.inner.lock().unwrap();
@@ -529,48 +543,49 @@ impl Filesystem for Pfs3Fs {
             }
             reply.written(data.len() as u32);
         } else {
-            reply.error(EIO);
+            reply.error(E::EIO);
         }
     }
 
     fn create(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
         _mode: u32,
         _umask: u32,
         _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
+        let parent = parent.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         let mut inner = self.inner.lock().unwrap();
         let parent_anode = match inner.inodes.get(&parent) {
             Some(info) if info.attr.kind == FileType::Directory => info.anode,
             _ => {
-                reply.error(ENOENT);
+                reply.error(E::ENOENT);
                 return;
             }
         };
 
         let Some(w) = inner.access.writer() else {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         };
         if w.write_file_in(parent_anode, name_str, &[]).is_err() {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         }
 
         let Ok(entries) = w.vol.list_dir_by_anode(parent_anode) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         if let Some(entry) = entries.iter().find(|e| util::name_eq_ci(&e.name, name_str)) {
@@ -581,22 +596,29 @@ impl Filesystem for Pfs3Fs {
             inner
                 .write_bufs
                 .insert(ino, (parent_anode, name_str.to_string(), Vec::new()));
-            reply.created(&TTL, &attr, 0, 0, 0);
+            reply.created(
+                &TTL,
+                &attr,
+                Generation(0),
+                FileHandle(0),
+                FopenFlags::empty(),
+            );
         } else {
-            reply.error(EIO);
+            reply.error(E::EIO);
         }
     }
 
     fn release(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
+        let ino = ino.0;
         let mut inner = self.inner.lock().unwrap();
         if let Some((parent_anode, name, data)) = inner.write_bufs.remove(&ino)
             && !data.is_empty()
@@ -614,7 +636,7 @@ impl Filesystem for Pfs3Fs {
             if result.is_err() {
                 // Re-insert buffer so data isn't lost; user can retry via fsync
                 inner.write_bufs.insert(ino, (parent_anode, name, data));
-                reply.error(EIO);
+                reply.error(E::EIO);
                 return;
             }
             let len = data.len() as u64;
@@ -628,9 +650,9 @@ impl Filesystem for Pfs3Fs {
     }
 
     fn setattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
@@ -638,13 +660,14 @@ impl Filesystem for Pfs3Fs {
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
         _ctime: Option<std::time::SystemTime>,
-        _fh: Option<u64>,
+        _fh: Option<FileHandle>,
         _crtime: Option<std::time::SystemTime>,
         _chgtime: Option<std::time::SystemTime>,
         _bkuptime: Option<std::time::SystemTime>,
-        _flags: Option<u32>,
+        _flags: Option<BsdFileFlags>,
         reply: ReplyAttr,
     ) {
+        let ino = ino.0;
         let mut inner = self.inner.lock().unwrap();
         if let Some(new_size) = size {
             if let Some(info) = inner.inodes.get_mut(&ino) {
@@ -656,7 +679,7 @@ impl Filesystem for Pfs3Fs {
         }
         if let Some(new_mode) = mode {
             if !self.writable {
-                reply.error(EPERM);
+                reply.error(E::EPERM);
                 return;
             }
             // Extract all needed values in one pass to avoid borrow issues
@@ -677,7 +700,7 @@ impl Filesystem for Pfs3Fs {
                         && w.update_dir_entry_protection(pa, &name, amiga_prot)
                             .is_err()
                     {
-                        reply.error(EIO);
+                        reply.error(E::EIO);
                         return;
                     }
                     if let Some(info) = inner.inodes.get_mut(&ino) {
@@ -691,81 +714,83 @@ impl Filesystem for Pfs3Fs {
         if let Some(info) = inner.inodes.get(&ino) {
             reply.attr(&TTL, &info.attr);
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
         }
     }
 
     fn getxattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         name: &OsStr,
         size: u32,
         reply: fuser::ReplyXattr,
     ) {
+        let ino = ino.0;
         // Root and virtual .Trashcan have no dir entries, so no protection bits
         if ino == FUSE_ROOT_INO || ino == TRASHCAN_INO {
-            reply.error(ENODATA);
+            reply.error(E::NO_XATTR);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         if name_str != "user.amiga.protection" {
-            reply.error(ENODATA);
+            reply.error(E::NO_XATTR);
             return;
         }
         let inner = self.inner.lock().unwrap();
         let prot = if let Some(info) = inner.inodes.get(&ino) {
             info.amiga_protection
         } else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         let val = util::amiga_protection_string(prot);
         if size == 0 {
             reply.size(val.len() as u32);
         } else if size < val.len() as u32 {
-            reply.error(libc::ERANGE);
+            reply.error(E::ERANGE);
         } else {
             reply.data(val.as_bytes());
         }
     }
 
     fn setxattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         name: &OsStr,
         value: &[u8],
         _flags: i32,
         _position: u32,
         reply: ReplyEmpty,
     ) {
+        let ino = ino.0;
         if !self.writable {
-            reply.error(EPERM);
+            reply.error(E::EPERM);
             return;
         }
         let Some(name_str) = name.to_str() else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         if name_str != "user.amiga.protection" {
-            reply.error(ENOTSUP);
+            reply.error(E::ENOTSUP);
             return;
         }
         let spec = if let Ok(s) = std::str::from_utf8(value) {
             s.trim()
         } else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         // Parse the protection spec (same format as CLI: "rwed", "+p", "-wd")
         let mut inner = self.inner.lock().unwrap();
         let current_prot = inner.inodes.get(&ino).map_or(0, |i| i.amiga_protection);
         let Some(new_prot) = util::parse_amiga_protection(current_prot, spec) else {
-            reply.error(EIO);
+            reply.error(E::EIO);
             return;
         };
         // Find file name and parent for disk write
@@ -777,7 +802,7 @@ impl Filesystem for Pfs3Fs {
             )
         });
         let Some((file_name, parent_ino, is_dir)) = inode_data else {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         };
         let parent_anode = inner.inodes.get(&parent_ino).map(|p| p.anode);
@@ -787,7 +812,7 @@ impl Filesystem for Pfs3Fs {
                 && w.update_dir_entry_protection(pa, &file_name, new_prot)
                     .is_err()
             {
-                reply.error(EIO);
+                reply.error(E::EIO);
                 return;
             }
             if let Some(info) = inner.inodes.get_mut(&ino) {
@@ -798,10 +823,11 @@ impl Filesystem for Pfs3Fs {
         reply.ok();
     }
 
-    fn listxattr(&mut self, _req: &Request<'_>, ino: u64, size: u32, reply: fuser::ReplyXattr) {
+    fn listxattr(&self, _req: &Request, ino: INodeNo, size: u32, reply: fuser::ReplyXattr) {
+        let ino = ino.0;
         let inner = self.inner.lock().unwrap();
         if !inner.inodes.contains_key(&ino) {
-            reply.error(ENOENT);
+            reply.error(E::ENOENT);
             return;
         }
         if ino == FUSE_ROOT_INO || ino == TRASHCAN_INO {
@@ -817,7 +843,7 @@ impl Filesystem for Pfs3Fs {
         if size == 0 {
             reply.size(list.len() as u32);
         } else if size < list.len() as u32 {
-            reply.error(libc::ERANGE);
+            reply.error(E::ERANGE);
         } else {
             reply.data(list);
         }
@@ -863,17 +889,27 @@ fn main() -> Result<()> {
 
     let fs = Pfs3Fs::new(access);
 
-    let mut options = vec![
+    // Config is #[non_exhaustive], so it is filled field by field rather than
+    // through a struct expression.
+    let mut config = Config::default();
+    config.mount_options = vec![
         MountOption::FSName("pfs3".to_string()),
         MountOption::DefaultPermissions,
     ];
     if !rw {
-        options.push(MountOption::RO);
+        config.mount_options.push(MountOption::RO);
     }
     if args.auto_unmount {
-        options.push(MountOption::AutoUnmount);
+        config.mount_options.push(MountOption::AutoUnmount);
+        // fuser 0.18 refuses auto_unmount with the default owner-only ACL,
+        // because fusermount needs allow_root or allow_other to perform it.
+        // RootAndOwner is the narrower of the two: the kernel is told
+        // allow_other and fuser enforces the root-only restriction itself.
+        // Most distributions still require `user_allow_other` in
+        // /etc/fuse.conf for this, which is why --auto-unmount says so.
+        config.acl = SessionACL::RootAndOwner;
     }
 
-    fuser::mount2(fs, &args.mountpoint, &options)?;
+    fuser::mount(fs, &args.mountpoint, &config)?;
     Ok(())
 }
