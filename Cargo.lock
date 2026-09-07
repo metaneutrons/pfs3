@@ -453,7 +453,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libpfs3"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "byteorder",
  "sevenz-rust2",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "pfs3"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "pfs3-fuse"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
