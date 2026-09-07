@@ -3,6 +3,7 @@
     ".": {
       "release-type": "rust",
       "component": "pfs3",
+      "include-component-in-tag": false,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "draft": true,
