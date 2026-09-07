@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/metaneutrons/pfs3/compare/v0.1.4...v0.1.5) (2026-09-07)
+
+
+### Bug Fixes
+
+* **release:** drop the redundant version field from the formula ([#18](https://github.com/metaneutrons/pfs3/issues/18)) ([ccbd34d](https://github.com/metaneutrons/pfs3/commit/ccbd34d107fa7bb54879b2d1717add709d168acb))
+
 ## [0.1.4](https://github.com/metaneutrons/pfs3/compare/v0.1.3...v0.1.4) (2026-09-07)
 
 
