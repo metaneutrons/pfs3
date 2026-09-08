@@ -32,3 +32,23 @@ jobs:
       # existed when the last commit landed. That is the whole point of the
       # schedule: a new advisory against an unchanged lockfile.
       - run: cargo deny check
+
+  codeql:
+    name: Dispatch the CodeQL re-scan
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      # codeql.yml carries no cron of its own so that the 60-day rule cannot
+      # take its push and pull_request triggers with it. The weekly re-run
+      # against a current query pack lives here instead, for the same reason the
+      # advisory job does: the finding may be new even though the code is not.
+      #
+      # workflow_dispatch is one of the two events GITHUB_TOKEN is still allowed
+      # to trigger, so this needs no app token.
+      - name: Start CodeQL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
