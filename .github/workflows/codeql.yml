@@ -1,0 +1,58 @@
+# CodeQL, deliberately without a schedule of its own.
+#
+# GitHub disables a scheduled workflow in a public repository after 60 days
+# without a commit, and it disables the whole file rather than only the cron
+# trigger. A schedule here would therefore take push and pull_request scanning
+# down with it, silently, which is the failure this repository already had once
+# (see the note in scan.yml). The weekly re-run is dispatched from scan.yml
+# instead, where a disabled file costs nothing but the scan itself.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Uploading the SARIF result needs this. `actions: read` is only required
+      # in private repositories; this one is public.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # `actions` analyses the workflow files themselves. That half matters
+        # here as much as the Rust half: the release pipeline is nine stages of
+        # shell with a write token, and script injection through an expression
+        # is a class of defect that clippy cannot see.
+        #
+        # `build-mode: none` builds the database from source without compiling.
+        # It is the supported mode for Rust, and the Rust extractor is the only
+        # reason the analysis does not need the pinned toolchain.
+        include:
+          - { language: rust, build-mode: none }
+          - { language: actions, build-mode: none }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}
