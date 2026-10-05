@@ -305,7 +305,7 @@ jobs:
               rustup show
               cargo build --locked --release -p pfs3 -p pfs3-fuse'
       - run: sudo chown -R "$USER" target
-      - uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-deb
       - name: Package
@@ -378,7 +378,7 @@ jobs:
       # Install syft only. The action's main entry point would generate and
       # attach an SBOM of its own, which would land outside the derived
       # inventory below.
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       - name: Sign every payload and give it an SBOM
         run: |
           set -euo pipefail
