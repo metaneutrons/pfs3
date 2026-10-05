@@ -2,6 +2,6 @@
 # Do not add a second one through dtolnay/rust-toolchain in a workflow.
 # Dependabot keeps this current through package-ecosystem: rust-toolchain.
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
