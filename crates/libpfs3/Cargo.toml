@@ -32,4 +32,4 @@ thiserror = "2"
 [dev-dependencies]
 # sevenz-rust is unmaintained and RUSTSEC-2026-0245 (path traversal on
 # extract) has no patched version. sevenz-rust2 is the maintained fork.
-sevenz-rust2 = "0.22"
+sevenz-rust2 = "0.24"
